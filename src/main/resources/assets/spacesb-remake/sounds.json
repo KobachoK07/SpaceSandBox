@@ -1,0 +1,11 @@
+{
+  "space_music": {
+    "category": "music",
+    "sounds": [
+      {
+        "name": "spacesb-remake:space_music",
+        "stream": true
+      }
+    ]
+  }
+}
