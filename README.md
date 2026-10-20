@@ -30,11 +30,11 @@ Ru: SpaceSandBox — это мод-песочница, позволяющая с
 
 ## 🖼️ Скриншоты (Screenshots)
 <p align="center">
-  <img src="https://cdn.discordapp.com/attachments/1128584015620874252/1562207287794212925/1.jpg?ex=6ad92669&is=6ad7d4e9&hm=bf98967d277da04ced6663e74f8762bc3a8eed50f613137477682fc79219fbec&" width="48%" />
-  <img src="https://cdn.discordapp.com/attachments/1128584015620874252/1562207623393054790/3.jpg?ex=6ad926b9&is=6ad7d539&hm=16678b396f0138a03909b3fadd87e33cf093574089f8295ee106165a11a1dccf&" width="48%" />
+  <img src="https://cdn.discordapp.com/attachments/1128584015620874252/1562210585024929862/8b21e495ff17a82e502ed7dab6239bf14f742e3a.png?ex=6ad9297b&is=6ad7d7fb&hm=2ec824bf199695029929c950089b098366e5904ddfcaa23e1aa910bd7093c264&" width="48%" />
+  <img src="https://cdn.discordapp.com/attachments/1128584015620874252/1562210585586700298/b5cc7c36b2f7f93db59032fd28432237cd647b46.png?ex=6ad9297c&is=6ad7d7fc&hm=a5519a029716103b300f69ce4b0d6ddf7aca143df4ce67d9de4b25443eb21205&" width="48%" />
 </p>
 <p align="center">
-  <img src="https://cdn.discordapp.com/attachments/1128584015620874252/1562207623703568434/2.jpg?ex=6ad926b9&is=6ad7d539&hm=34d5ada14510a93373e30565cc1db1841012f8212abda3c0d5e94a7595e26645&" width="48%" />
+  <img src="https://cdn.discordapp.com/attachments/1128584015620874252/1562210586513768519/027da15941b9ed5737efcf811e3ad26abd54e398.png?ex=6ad9297c&is=6ad7d7fc&hm=2265dc601229eb6f51e8444df74d0aee03b0ae4f67894b7458929828f282f0d0&" width="48%" />
   <img src="https://cdn.discordapp.com/attachments/1128584015620874252/1562207780755083335/6d60c6d7afdbb0c7cd90c71e7cd174ffcdf21480.jpeg?ex=6ad926df&is=6ad7d55f&hm=a9c2c20c31d862a0d133ab52042e039f3a085ee9328009e597f33f3659337466&" width="48%" />
 </p>
 
