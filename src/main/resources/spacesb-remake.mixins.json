@@ -3,11 +3,8 @@
 	"package": "spacesb.remake.mixin",
 	"compatibilityLevel": "JAVA_21",
 	"mixins": [
-		"GameRendererLobotomyMixin",
-		"SoundLobotomyMixin",
-		"MouseLobotomyMixin",
 		"MinecraftClientLobotomyMixin",
-		"WindowLobotomyMixin"
+		"MouseLobotomyMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1

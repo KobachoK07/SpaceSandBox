@@ -16,8 +16,9 @@ public class PlanetRegistry {
                 p.getRotationPeriod(),
                 p.getTemperature(),
                 p.getUvMap(),
+                p.getFlatNormalizedUv(),
                 p.getType(),
-                p.isRigid() // Передаем агрегатное состояние в движок
+                p.isRigid()
         );
     }
 
@@ -37,6 +38,7 @@ public class PlanetRegistry {
                 fromPlanet(new M82X1()),
                 fromPlanet(new M15()),
                 fromPlanet(new SagittariusA()),
+                fromPlanet(new M60UDS1()),
                 fromPlanet(new M87()),
                 fromPlanet(new Ton618()),
                 fromPlanet(new PhoenixA())

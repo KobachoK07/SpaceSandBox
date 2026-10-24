@@ -3,20 +3,17 @@
 	"id": "spacesb-remake",
 	"version": "${version}",
 	"name": "SpaceSB Remake",
-	"description": "This is an example description! Tell everyone what your mod is about!",
+	"description": "Custom Vulkan Engine",
 	"authors": [
-		"Me!"
+		"Me"
 	],
-	"contact": {
-		"homepage": "https://fabricmc.net/",
-		"sources": "https://github.com/FabricMC/fabric-example-mod"
-	},
-	"license": "CC0-1.0",
+	"contact": {},
+	"license": "MIT",
 	"icon": "assets/spacesb-remake/icon.png",
 	"environment": "*",
 	"entrypoints": {
-		"main": [
-			"spacesb.remake.SpaceSBRemake"
+		"preLaunch": [
+			"spacesb.remake.EarlyInit"
 		]
 	},
 	"mixins": [
@@ -25,7 +22,6 @@
 	"depends": {
 		"fabricloader": ">=0.19.3",
 		"minecraft": "~1.21.1",
-		"java": ">=21",
-		"fabric-api": "*"
+		"java": ">=21"
 	}
 }

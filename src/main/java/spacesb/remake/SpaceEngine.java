@@ -1,26 +1,28 @@
 package spacesb.remake;
 
-import com.mojang.blaze3d.systems.RenderSystem;
-import com.mojang.blaze3d.systems.VertexSorter;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.render.*;
-import net.minecraft.client.util.math.MatrixStack;
-import net.minecraft.util.Identifier;
-import org.joml.Matrix4f;
-import org.joml.Quaternionf;
 import org.joml.Vector3f;
 import org.joml.Vector3d;
 import org.lwjgl.glfw.GLFW;
+import spacesb.remake.planets.BasePlanet;
 import spacesb.remake.planets.PlanetRegistry;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
-import java.util.concurrent.CopyOnWriteArrayList;
 
 public class SpaceEngine {
 
+    public static final Object STATE_LOCK = new Object();
+
+    // ИСПРАВЛЕНО (Пункт 2 ревью): единый статический компаратор без аллокации лямбд в куче!
+    public static final Comparator<Planet> WARP_GROUP_COMPARATOR =
+            (a, b) -> Integer.compare(a.getWarpGroupKey(), b.getWarpGroupKey());
+    public static volatile boolean planetsNeedSort = false;
+
+    public static long windowHandle = 0;
+
     public static final double BLOCK_TO_KM = 1260.0;
+    public static final String TEX_FRAGMENT = "assets/spacesb-remake/textures/particle/fragments.png";
 
     public static boolean enableCentrifugalForce = true;
     public static boolean enableRocheLimit = true;
@@ -34,6 +36,22 @@ public class SpaceEngine {
     public static double targetOrbitDistance = -1.0;
     public static Planet prevLockedTarget = null;
 
+    public static boolean isVulkanInitialized = false;
+
+    public static float[] buildFlatUv(float[][] uv) {
+        float[] flat = new float[24];
+        float[][] src = (uv != null) ? uv : BasePlanet.UV_DEFAULT;
+        for (int f = 0; f < 6; f++) {
+            float[] face = (f < src.length && src[f] != null && src[f].length >= 4) ? src[f] : BasePlanet.UV_DEFAULT[f];
+            int base = f * 4;
+            flat[base]     = face[0] / 16.0f;
+            flat[base + 1] = face[1] / 16.0f;
+            flat[base + 2] = face[2] / 16.0f;
+            flat[base + 3] = face[3] / 16.0f;
+        }
+        return flat;
+    }
+
     public static class Notification {
         public String text;
         public double life = 2.5;
@@ -42,30 +60,7 @@ public class SpaceEngine {
         public double alpha = 0.0;
         public Notification(String text) { this.text = text; }
     }
-    public static final List<Notification> notifications = new CopyOnWriteArrayList<>();
-
-    public static final Identifier ICON_PLANETS = Identifier.of("spacesb-remake", "textures/gui/planets.png");
-    public static final Identifier ICON_MOONS = Identifier.of("spacesb-remake", "textures/gui/moons.png");
-    public static final Identifier ICON_STARS = Identifier.of("spacesb-remake", "textures/gui/stars.png");
-    public static final Identifier ICON_HOLES = Identifier.of("spacesb-remake", "textures/gui/holes.png");
-    public static final Identifier CURSOR_TEX = Identifier.of("spacesb-remake", "textures/gui/cursor.png");
-    public static final Identifier CURSOR_AIM_TEX = Identifier.of("spacesb-remake", "textures/gui/cursor1.png");
-    public static final Identifier ICON_FLASHLIGHT = Identifier.of("spacesb-remake", "textures/gui/flashlight.png");
-    public static final Identifier ICON_RAYS = Identifier.of("spacesb-remake", "textures/gui/rays.png");
-    public static final Identifier LOGO_TEX = Identifier.of("spacesb-remake", "textures/gui/mod_logo.png");
-    public static final Identifier MODRINTH_TEX = Identifier.of("spacesb-remake", "textures/gui/mod.png");
-    public static final Identifier TELEGRAM_TEX = Identifier.of("spacesb-remake", "textures/gui/tgg.png");
-    public static final Identifier DONATE_TEX = Identifier.of("spacesb-remake", "textures/gui/da.png");
-
-    public static final Identifier SKY_FRONT = Identifier.of("spacesb-remake", "textures/sky/sky_front.png");
-    public static final Identifier SKY_BACK = Identifier.of("spacesb-remake", "textures/sky/sky_back.png");
-    public static final Identifier SKY_LEFT = Identifier.of("spacesb-remake", "textures/sky/sky_left.png");
-    public static final Identifier SKY_RIGHT = Identifier.of("spacesb-remake", "textures/sky/sky_right.png");
-    public static final Identifier SKY_TOP = Identifier.of("spacesb-remake", "textures/sky/sky_top.png");
-    public static final Identifier SKY_BOTTOM = Identifier.of("spacesb-remake", "textures/sky/sky_bottom.png");
-
-    public static final Identifier TEX_EXPLOSION = Identifier.of("spacesb-remake", "textures/particle/explosionsmini.png");
-    public static final Identifier TEX_FRAGMENT = Identifier.of("spacesb-remake", "textures/particle/fragments.png");
+    public static final List<Notification> notifications = new ArrayList<>();
 
     public static class Scorch {
         public Vector3d localNorm;
@@ -77,63 +72,122 @@ public class SpaceEngine {
 
     public static class Planet {
         public String name;
-        public Vector3d pos, vel;
+        public final Vector3d pos = new Vector3d();
+        public final Vector3d vel = new Vector3d();
         public double radius, targetRadius;
         public double mass, tilt, rotationPeriod, temperature;
-        public Identifier texture;
+        public String texture;
         public float[][] uvMap;
+        public final float[] flatUv;
         public String type;
         public boolean isRigid;
         public boolean raysOn = true, flashlightOn = false;
         public int rColor, gColor, bColor;
-
-        // НОВОЕ: Накопленный угол вращения для плавности
         public double currentAngle = 0.0;
 
-        public List<Vector3d> trail = new CopyOnWriteArrayList<>();
-        public List<Scorch> scorches = new CopyOnWriteArrayList<>();
+        public final List<Vector3d> trail = new ArrayList<>();
+        public final List<Scorch> scorches = new ArrayList<>();
 
-        public Planet(String name, double x, double y, double z, Vector3d vel, double radius, double mass, double tilt, double rot, double temp, Identifier tex, float[][] uv, String type, boolean isRigid) {
-            this.name = name; this.pos = new Vector3d(x, y, z); this.vel = new Vector3d(vel); this.radius = radius; this.targetRadius = radius;
-            this.mass = mass; this.tilt = tilt; this.rotationPeriod = rot; this.temperature = temp;
-            this.texture = tex; this.uvMap = uv; this.type = type; this.isRigid = isRigid;
-            this.rColor = (int)(Math.random() * 155 + 100); this.gColor = (int)(Math.random() * 155 + 100); this.bColor = (int)(Math.random() * 155 + 100);
+        public Planet(String name, double x, double y, double z, Vector3d vel, double radius, double mass, double tilt, double rot, double temp, String tex, float[][] uv, String type, boolean isRigid) {
+            this.name = name;
+            this.pos.set(x, y, z);
+            this.vel.set(vel);
+            this.radius = Math.max(1e-4, radius);
+            this.targetRadius = this.radius;
+            this.mass = Math.max(0.0, mass);
+            this.tilt = tilt;
+            this.rotationPeriod = rot;
+            this.temperature = temp;
+            this.texture = tex;
+            this.uvMap = uv;
+            this.flatUv = buildFlatUv(uv);
+            this.type = type;
+            this.isRigid = !"Hole".equals(type) && isRigid;
+
+            if ("Jupiter".equalsIgnoreCase(name)) {
+                this.rColor = 225; this.gColor = 175; this.bColor = 125;
+            } else if ("Saturn".equalsIgnoreCase(name)) {
+                this.rColor = 235; this.gColor = 205; this.bColor = 140;
+            } else if ("Uranus".equalsIgnoreCase(name)) {
+                this.rColor = 135; this.gColor = 215; this.bColor = 235;
+            } else if ("Sun".equalsIgnoreCase(name)) {
+                this.rColor = 255; this.gColor = 200; this.bColor = 110;
+            } else if ("Stephenson 2-18".equalsIgnoreCase(name)) {
+                this.rColor = 255; this.gColor = 95; this.bColor = 45;
+            } else {
+                this.rColor = (int)(Math.random() * 155 + 100);
+                this.gColor = (int)(Math.random() * 155 + 100);
+                this.bColor = (int)(Math.random() * 155 + 100);
+            }
         }
 
         public double getDensity() {
-            double vol = (4.0 / 3.0) * Math.PI * Math.pow(radius, 3);
-            if (vol <= 0) return 0;
+            if (radius <= 1e-6 || mass <= 0.0) return 0.0;
+            double vol = (4.0 / 3.0) * Math.PI * (radius * radius * radius);
+            if (vol <= 1e-18 || Double.isInfinite(vol) || Double.isNaN(vol)) return 0.0;
             return mass / vol;
+        }
+
+        public int getWarpGroupKey() {
+            if ("Hole".equals(type)) return 0;
+            if ("Star".equals(type)) return 1;
+            return isRigid ? 2 : 3;
         }
     }
 
     public static class Fragment {
-        public Vector3d pos, vel;
-        public double size, life, maxLife, mass;
-        public Identifier tex;
+        public final Vector3d pos = new Vector3d();
+        public final Vector3d vel = new Vector3d();
+        public double size, life, maxLife, mass, temperature;
+        public String tex;
         public float u1, v1, u2, v2;
-        public Vector3f rotAxis;
-        public float angle, rotSpeed;
+        public final Vector3d rotAxis = new Vector3d(0, 1, 0);
+        public double angle, rotSpeed;
 
-        public Fragment(Vector3d pos, Vector3d vel, double size, double life, double mass, Identifier tex, float u1, float v1, float u2, float v2) {
-            this.pos = new Vector3d(pos); this.vel = new Vector3d(vel);
-            this.size = size; this.life = life; this.maxLife = life; this.mass = mass;
-            this.tex = tex; this.u1 = u1; this.v1 = v1; this.u2 = u2; this.v2 = v2;
-            this.rotAxis = new Vector3f((float)Math.random(), (float)Math.random(), (float)Math.random()).normalize();
-            this.rotSpeed = (float)(Math.random() * 360.0 - 180.0);
-            this.angle = (float)(Math.random() * 360.0);
+        public Fragment() {}
+
+        public Fragment(Vector3d pos, Vector3d vel, double size, double life, double mass, double temperature, String tex, float u1, float v1, float u2, float v2) {
+            set(pos, vel, size, life, mass, temperature, tex, u1, v1, u2, v2);
+        }
+
+        public void set(Vector3d p, Vector3d v, double s, double l, double m, double temp, String tx, float u0, float v0, float u1_, float v1_) {
+            this.pos.set(p);
+            this.vel.set(v);
+            this.size = s;
+            this.life = l;
+            this.maxLife = l;
+            this.mass = m;
+            this.temperature = temp;
+            this.tex = tx;
+            this.u1 = u0; this.v1 = v0; this.u2 = u1_; this.v2 = v1_;
+            this.angle = Math.random() * 360.0;
+            this.rotSpeed = Math.random() * 360.0 - 180.0;
         }
     }
 
     public static class Particle {
-        public Vector3d pos, vel;
+        public final Vector3d pos = new Vector3d();
+        public final Vector3d vel = new Vector3d();
         public double size, life, maxLife;
         public int r, g, b, type;
-        public double mass;
+        public double mass, temperature;
 
-        public Particle(Vector3d pos, Vector3d vel, double size, double life, int r, int g, int b, int type, double mass) {
-            this.pos = new Vector3d(pos); this.vel = new Vector3d(vel); this.size = size;
-            this.life = life; this.maxLife = life; this.r = r; this.g = g; this.b = b; this.type = type; this.mass = mass;
+        public Particle() {}
+
+        public Particle(Vector3d pos, Vector3d vel, double size, double life, int r, int g, int b, int type, double mass, double temperature) {
+            set(pos, vel, size, life, r, g, b, type, mass, temperature);
+        }
+
+        public void set(Vector3d p, Vector3d v, double s, double l, int r_, int g_, int b_, int t, double m, double temp) {
+            this.pos.set(p);
+            this.vel.set(v);
+            this.size = s;
+            this.life = l;
+            this.maxLife = l;
+            this.r = r_; this.g = g_; this.b = b_;
+            this.type = t;
+            this.mass = m;
+            this.temperature = temp;
         }
     }
 
@@ -142,12 +196,22 @@ public class SpaceEngine {
     public static class MenuItem {
         public String name, type;
         public boolean isRigid;
-        public Identifier guiTex, planetTex;
-        public float radius;
+        public String guiTex, planetTex;
+        public double radius;
         public double mass, tilt, rotationPeriod, temperature;
         public float[][] uvMap;
-        public MenuItem(String n, Identifier gui, Identifier tex, float r, double m, double t, double rot, double temp, float[][] uv, String type, boolean isRigid) {
-            name = n; guiTex = gui; planetTex = tex; radius = r; mass = m; tilt = t; rotationPeriod = rot; temperature = temp; uvMap = uv; this.type = type; this.isRigid = isRigid;
+        public final float[] flatUv;
+
+        // Конструктор с поддержкой как 11, так и 12 аргументов для полной совместимости с PlanetRegistry
+        public MenuItem(String n, String gui, String tex, double r, double m, double t, double rot, double temp, float[][] uv, String type, boolean isRigid) {
+            this(n, gui, tex, r, m, t, rot, temp, uv, buildFlatUv(uv), type, isRigid);
+        }
+
+        public MenuItem(String n, String gui, String tex, double r, double m, double t, double rot, double temp, float[][] uv, float[] flatUv, String type, boolean isRigid) {
+            name = n; guiTex = gui; planetTex = tex; radius = r; mass = m; tilt = t;
+            rotationPeriod = rot; temperature = temp; uvMap = uv;
+            this.flatUv = (flatUv != null && flatUv.length == 24) ? flatUv : buildFlatUv(uv);
+            this.type = type; this.isRigid = isRigid;
         }
     }
 
@@ -157,9 +221,9 @@ public class SpaceEngine {
         menuItems = PlanetRegistry.menuItems;
     }
 
-    public static final List<Planet> planets = new CopyOnWriteArrayList<>();
-    public static final List<Particle> particles = new CopyOnWriteArrayList<>();
-    public static final List<Fragment> fragments = new CopyOnWriteArrayList<>();
+    public static final List<Planet> planets = new ArrayList<>();
+    public static final List<Particle> particles = new ArrayList<>();
+    public static final List<Fragment> fragments = new ArrayList<>();
 
     public static volatile double simTimeSeconds = 0;
     public static double timeScale = 1.0;
@@ -187,7 +251,7 @@ public class SpaceEngine {
 
     public static boolean editFlashlight = false, editRays = true, isEditMenuMinimized = false;
     public static double editMenuScrollY = 0, editMenuAnimX = 0, lastUiTime = 0;
-    public static int currentEditMenuX = 0, currentEditMenuW = 180, activeEditField = -1;
+    public static int currentEditMenuX = 0, currentEditMenuW = 230, activeEditField = -1;
     public static boolean isTypingPlanetEdit = false;
     public static String planetEditBuffer = "";
     public static int[] fieldUnits = new int[6];
@@ -212,31 +276,72 @@ public class SpaceEngine {
     public static int[][] planetHitboxes = new int[64][4];
     public static int speedBoxHitX, speedBoxHitY, speedBoxHitW, speedBoxHitH, unitBoxHitX, unitBoxHitY, unitBoxHitW, unitBoxHitH, unitMenuHitX, unitMenuHitY, unitMenuHitW, unitMenuHitH, autoToggleHitX, autoToggleHitY, autoToggleHitW, autoToggleHitH;
     public static int playHitX, playHitY, playHitW, playHitH, leftArrowHitX, leftArrowHitY, leftArrowHitW, leftArrowHitH, rightArrowHitX, rightArrowHitY, rightArrowHitW, rightArrowHitH;
-    public static int toolMenuX, toolMenuY, toolMenuW = 140, toolMenuH = 113, physicsToolY, moveToolY, gridToolY, trailToolY, clearToolY;
+    public static int toolMenuX, toolMenuY, toolMenuW = 190, toolMenuH = 145, physicsToolY, moveToolY, gridToolY, trailToolY, clearToolY;
     public static int modBtnX, modBtnY, modBtnS = 24, tgBtnX, tgBtnY, tgBtnS = 24, daBtnX, daBtnY, daBtnS = 24, closeBtnX, closeBtnY, closeBtnW, closeBtnH;
     public static int[][] editBoxHits = new int[6][4], unitBoxHits = new int[6][4];
     public static int[][][] multBoxHits = new int[3][5][4];
 
     public static boolean[] keyStates = new boolean[GLFW.GLFW_KEY_LAST + 1];
     public static boolean[] justPressed = new boolean[GLFW.GLFW_KEY_LAST + 1];
-
     public static long lastScrollTime = 0;
 
-    public static void onScroll(double yoffset) { SpaceUI.onScroll(yoffset); }
+    public static void adjustSpeed(double vertical) {
+        if (isAddMenuOpen) {
+            menuScrollY -= vertical * 22.0;
+            if (menuScrollY < 0) menuScrollY = 0;
+            return;
+        }
 
-    public static void processInput(long window) {
-        SpaceInput.processInput(window);
-
-        if (isToolsMenuOpen && !isWelcomeMenuOpen) {
-            double mX = MinecraftClient.getInstance().mouse.getX() * MinecraftClient.getInstance().getWindow().getScaledWidth() / (double) MinecraftClient.getInstance().getWindow().getWidth();
-            double mY = MinecraftClient.getInstance().mouse.getY() * MinecraftClient.getInstance().getWindow().getScaledHeight() / (double) MinecraftClient.getInstance().getWindow().getHeight();
-            if (isLMBPressed && mX >= toolMenuX + 8 && mX <= toolMenuX + toolMenuW - 8 && mY >= clearToolY && mY <= clearToolY + 16) {
-                fragments.clear();
+        if (CameraManager.isLocked && CameraManager.lockedTarget != null) {
+            if (targetOrbitDistance < 0) {
+                targetOrbitDistance = CameraManager.lockedTarget.radius * 4.0;
             }
+            if (vertical > 0) {
+                targetOrbitDistance /= 1.18;
+                double minDist = CameraManager.lockedTarget.radius * 1.85 + 0.5;
+                if (targetOrbitDistance < minDist) targetOrbitDistance = minDist;
+            } else if (vertical < 0) {
+                targetOrbitDistance *= 1.18;
+                double maxDist = CameraManager.lockedTarget.radius * 250.0;
+                if (targetOrbitDistance > maxDist) targetOrbitDistance = maxDist;
+            }
+            return;
+        }
+
+        lastScrollTime = System.currentTimeMillis();
+        if (vertical > 0) {
+            playerFlightSpeed *= 1.15;
+            if (playerFlightSpeed > 1000000.0) playerFlightSpeed = 1000000.0;
+        } else if (vertical < 0) {
+            playerFlightSpeed /= 1.15;
+            if (playerFlightSpeed < 0.1) playerFlightSpeed = 0.1;
         }
     }
 
-    public static void renderUI(DrawContext context) { SpaceUI.renderUI(context); }
+    public static void getInclinedOrbitState(Vector3d baseP, double inclination, Planet target, Vector3d outPos, Vector3d outUp) {
+        Vector3d R = new Vector3d(baseP).sub(target.pos);
+        if (R.lengthSquared() < 0.001) { outPos.set(baseP); outUp.set(0, 1, 0); return; }
+        Vector3d axis = new Vector3d(R).cross(new Vector3d(0, 1, 0));
+        if (axis.lengthSquared() < 0.001) axis.set(1, 0, 0); else axis.normalize();
+        Vector3d rotR = new Vector3d(R).rotateAxis(inclination, axis.x, axis.y, axis.z);
+        outPos.set(target.pos).add(rotR);
+        outUp.set(0, 1, 0).rotateAxis(inclination, axis.x, axis.y, axis.z);
+    }
+
+    public static Vector3d getHologramPos(double radius) {
+        CameraManager.ensureFitsOnScreen(radius);
+        Vector3f rayF = CameraManager.getMouseRay();
+        Vector3d dir = new Vector3d(rayF.x, rayF.y, rayF.z);
+        if (isPlacingPlanet && currentSpawnMode == SpawnMode.LAUNCH) {
+            return new Vector3d(CameraManager.pos).add(dir.mul(radius * 3.8 + 8.0));
+        }
+        double minSafeDist = radius * 4.2 + 5.0;
+        double t = (dir.y < -0.001) ? -CameraManager.pos.y / dir.y : minSafeDist;
+        if (t < minSafeDist) t = minSafeDist;
+        Vector3d pos = new Vector3d(CameraManager.pos).add(dir.mul(t));
+        pos.y = 0.0;
+        return pos;
+    }
 
     public static void applyTypedSpeed() {
         isTypingSpeed = false;
@@ -281,55 +386,25 @@ public class SpaceEngine {
                 double val = Double.parseDouble(planetEditBuffer);
                 int u = fieldUnits[activeEditField];
                 switch (activeEditField) {
-                    case 0:
-                        if (u == 0) p.mass = val; else if (u == 1) p.mass = val * 333000.0; else if (u == 2) p.mass = val / 5.9722e24; break;
-                    case 1:
-                        if (u == 0) p.radius = ((val / 1260.0) / 2.0); else if (u == 1) p.radius = ((val * 12742.0 / 1260.0) / 2.0); else if (u == 2) p.radius = ((val * 1392700.0 / 1260.0) / 2.0);
-                        p.targetRadius = p.radius;
-                        break;
-                    case 2:
-                        if (u == 0) p.rotationPeriod = val; else if (u == 1) p.rotationPeriod = val * 24.0; else if (u == 2) p.rotationPeriod = val * 8760.0; break;
-                    case 3:
-                        p.tilt = val; break;
-                    case 4:
-                        double vNew = 0;
-                        if (u == 0) vNew = (val / 1260.0); else if (u == 1) vNew = (val / 1260000.0); else if (u == 2) vNew = (val / (1260.0 * 3600.0)); else if (u == 3) vNew = (val * 299792.458 / 1260.0);
-                        double maxSpeedBlocks = PhysicsEngine.MAX_C_BLOCKS;
-                        if (vNew > maxSpeedBlocks) vNew = maxSpeedBlocks;
+                    case 0: if (u == 0) p.mass = val; else if (u == 1) p.mass = val * 333000.0; else if (u == 2) p.mass = val / 5.9722e24; break;
+                    case 1: if (u == 0) p.radius = ((val / 1260.0) / 2.0); else if (u == 1) p.radius = ((val * 12742.0 / 1260.0) / 2.0); else if (u == 2) p.radius = ((val * 1392700.0 / 1260.0) / 2.0); p.targetRadius = p.radius; break;
+                    case 2: if (u == 0) p.rotationPeriod = val; else if (u == 1) p.rotationPeriod = val * 24.0; else if (u == 2) p.rotationPeriod = val * 8760.0; break;
+                    case 3: p.tilt = val; break;
+                    case 4: double vNew = 0; if (u == 0) vNew = (val / 1260.0); else if (u == 1) vNew = (val / 1260000.0); else if (u == 2) vNew = (val / (1260.0 * 3600.0)); else if (u == 3) vNew = (val * 299792.458 / 1260.0);
                         if (p.vel.lengthSquared() > 0.0001) p.vel.normalize().mul(vNew); else p.vel.set(vNew, 0, 0); break;
-                    case 5:
-                        if (u == 0) p.temperature = val; else if (u == 1) p.temperature = val + 273.15; else if (u == 2) p.temperature = (val - 32.0) / 1.8; break;
+                    case 5: if (u == 0) p.temperature = val; else if (u == 1) p.temperature = val - 273.15; else if (u == 2) p.temperature = (val - 32.0) / 1.8; break;
                 }
             }
         } catch (Exception e) {}
         activeEditField = -1;
     }
 
-    public static Vector3d getHologramPos(double radius) {
-        org.joml.Vector3f rayF = CameraManager.getMouseRay();
-        Vector3d dir = new Vector3d(rayF.x, rayF.y, rayF.z);
-        if (isPlacingPlanet && currentSpawnMode == SpawnMode.LAUNCH) return new Vector3d(CameraManager.pos).add(dir.mul(radius * 2.5 + 5.0));
-        double t = (dir.y < -0.001) ? -CameraManager.pos.y / dir.y : 1000.0;
-        Vector3d pos = new Vector3d(CameraManager.pos).add(dir.mul(t)); pos.y = 0.0; return pos;
-    }
-
-    public static void getInclinedOrbitState(Vector3d baseP, double inclination, Planet target, Vector3d outPos, Vector3d outUp) {
-        Vector3d R = new Vector3d(baseP).sub(target.pos);
-        if (R.lengthSquared() < 0.001) { outPos.set(baseP); outUp.set(0, 1, 0); return; }
-        Vector3d axis = new Vector3d(R).cross(new Vector3d(0, 1, 0));
-        if (axis.lengthSquared() < 0.001) axis.set(1, 0, 0); else axis.normalize();
-        Vector3d rotR = new Vector3d(R).rotateAxis(inclination, axis.x, axis.y, axis.z);
-        outPos.set(target.pos).add(rotR);
-        outUp.set(0, 1, 0).rotateAxis(inclination, axis.x, axis.y, axis.z);
-    }
-
     public static Vector3d calculateSpawnVelocity(Vector3d pos, Vector3d up) {
         Vector3d velocity = new Vector3d(0, 0, 0);
         projectionText = "";
-        double maxSpeedBlocks = PhysicsEngine.MAX_C_BLOCKS;
 
         if (currentSpawnMode == SpawnMode.LAUNCH) {
-            org.joml.Vector3f rayF = CameraManager.getMouseRay();
+            Vector3f rayF = CameraManager.getMouseRay();
             Vector3d forward = new Vector3d(rayF.x, rayF.y, rayF.z);
             capSpeed(); double speedInKmS = getSpeedInKmS();
             double launchSpeedBlocks = speedInKmS / BLOCK_TO_KM; velocity = new Vector3d(forward).mul(launchSpeedBlocks);
@@ -340,7 +415,6 @@ public class SpaceEngine {
 
             if (distBlocks > 0.1) {
                 dirToAttractor.normalize();
-
                 if (autoOrbitSpeed) {
                     double vBlocks = Math.sqrt((PhysicsEngine.G * attractor.mass) / distBlocks);
                     double requiredKmS = vBlocks * BLOCK_TO_KM;
@@ -357,552 +431,181 @@ public class SpaceEngine {
                 if (right.lengthSquared() < 0.001) { up.set(1, 0, 0); right = new Vector3d(dirToAttractor).cross(up); }
                 right.normalize();
                 velocity = right.mul(orbitalVelocity).add(attractor.vel);
-                projectionText = SpaceUI.formatDistanceDynamic(distBlocks * BLOCK_TO_KM);
             }
         }
-        if (velocity.length() > maxSpeedBlocks) velocity.normalize().mul(maxSpeedBlocks);
         if (Double.isNaN(velocity.x)) velocity.set(0,0,0);
         return velocity;
     }
 
+    // ИСПРАВЛЕНО (Пункт 1 ревью): методы спавна только выставляют флаг planetsNeedSort = true, а сама сортировка выполняется строго внутри STATE_LOCK в renderFrame!
     public static void spawnPlanetWithOrbit(Vector3d basePos, double inclination) {
-        MenuItem item = customPlanet != null ? customPlanet : menuItems[selectedPlanetIndex];
-        Vector3d spawnPos = new Vector3d(), spawnUp = new Vector3d();
-        getInclinedOrbitState(basePos, inclination, orbitTarget, spawnPos, spawnUp);
-        Vector3d velocity = calculateSpawnVelocity(spawnPos, spawnUp);
-        planets.add(new Planet(item.name, spawnPos.x, spawnPos.y, spawnPos.z, velocity, item.radius, item.mass, item.tilt, item.rotationPeriod, item.temperature, item.planetTex, item.uvMap, item.type, item.isRigid));
-        customPlanet = null;
+        synchronized (STATE_LOCK) {
+            MenuItem item = customPlanet != null ? customPlanet : menuItems[selectedPlanetIndex];
+            Vector3d spawnPos = new Vector3d(), spawnUp = new Vector3d();
+            getInclinedOrbitState(basePos, inclination, orbitTarget, spawnPos, spawnUp);
+            Vector3d velocity = calculateSpawnVelocity(spawnPos, spawnUp);
+            planets.add(new Planet(item.name, spawnPos.x, spawnPos.y, spawnPos.z, velocity, item.radius, item.mass, item.tilt, item.rotationPeriod, item.temperature, item.planetTex, item.uvMap, item.type, item.isRigid));
+            planetsNeedSort = true;
+            customPlanet = null;
+        }
     }
 
     public static void spawnPlanet(Vector3d pos, Vector3d up) {
-        MenuItem item = customPlanet != null ? customPlanet : menuItems[selectedPlanetIndex];
-        Vector3d velocity = calculateSpawnVelocity(pos, up);
-        planets.add(new Planet(item.name, pos.x, pos.y, pos.z, velocity, item.radius, item.mass, item.tilt, item.rotationPeriod, item.temperature, item.planetTex, item.uvMap, item.type, item.isRigid));
-        customPlanet = null;
+        synchronized (STATE_LOCK) {
+            MenuItem item = customPlanet != null ? customPlanet : menuItems[selectedPlanetIndex];
+            Vector3d velocity = calculateSpawnVelocity(pos, up);
+            planets.add(new Planet(item.name, pos.x, pos.y, pos.z, velocity, item.radius, item.mass, item.tilt, item.rotationPeriod, item.temperature, item.planetTex, item.uvMap, item.type, item.isRigid));
+            planetsNeedSort = true;
+            customPlanet = null;
+        }
     }
 
-    public static void render3D(DrawContext context) {
+    public static void renderFrame() {
+        long window = windowHandle != 0 ? windowHandle : GLFW.glfwGetCurrentContext();
+        if (window == 0) return;
+        windowHandle = window;
+
+        GLFW.glfwPollEvents();
+        if (!CameraManager.isRotating()) {
+            GLFW.glfwSetInputMode(window, GLFW.GLFW_CURSOR, GLFW.GLFW_CURSOR_HIDDEN);
+        }
+
+        try {
+            Class.forName("org.lwjgl.vulkan.VK10");
+        } catch (ClassNotFoundException e) {
+            System.err.println("[SpaceSandBox] КРИТИЧЕСКАЯ ОШИБКА: Библиотеки Vulkan не найдены!");
+            return;
+        }
+
         double currentRealTime = GLFW.glfwGetTime();
         if (lastRenderTime == 0) lastRenderTime = currentRealTime;
         double dtReal = currentRealTime - lastRenderTime;
         lastRenderTime = currentRealTime;
 
-        MinecraftClient client = MinecraftClient.getInstance();
-        client.getWindow().setTitle("Space SandBox");
+        try (org.lwjgl.system.MemoryStack stack = org.lwjgl.system.MemoryStack.stackPush()) {
+            java.nio.IntBuffer fw = stack.mallocInt(1);
+            java.nio.IntBuffer fh = stack.mallocInt(1);
+            GLFW.glfwGetFramebufferSize(window, fw, fh);
+            int fWidth = fw.get(0);
+            int fHeight = fh.get(0);
 
-        PhysicsEngine.tick(dtReal);
+            if (fWidth <= 0 || fHeight <= 0) return;
 
-        MenuItem selectedItem = customPlanet != null ? customPlanet : (menuItems == null || menuItems.length == 0 ? null : menuItems[selectedPlanetIndex]);
-        boolean hasBH = false;
-        Planet holoPlanet = null;
-        Vector3d holoPos = new Vector3d();
-        Vector3d holoUp = new Vector3d(0, 1, 0);
-        validSpawn = true;
+            if (!isVulkanInitialized) {
+                GLFW.glfwSetWindowTitle(window, "Space SandBox");
 
-        boolean drawLine = false;
-        Vector3d startPos = new Vector3d();
+                spacesb.remake.render.SBoxVulkanCore.init();
+                spacesb.remake.render.SBoxVulkanSwapchain.initSwapchain(window, fWidth, fHeight);
+                spacesb.remake.render.SBoxVulkanCanvas.createCanvas(fWidth, fHeight);
+                spacesb.remake.render.SBoxCompute.init();
+                spacesb.remake.render.SBoxVulkanUI.init();
+                PhysicsEngine.init();
 
-        if (isPlacingPlanet && !isWelcomeMenuOpen && selectedItem != null) {
-            if (currentSpawnMode == SpawnMode.ORBIT) {
-                if (isDraggingOrbit && orbitTarget != null) getInclinedOrbitState(baseOrbitPos, orbitInclination, orbitTarget, holoPos, holoUp);
-                else holoPos.set(getHologramPos(selectedItem.radius));
+                SpaceUI.preloadAllResources();
 
-                holoPlanet = new Planet(selectedItem.name, holoPos.x, holoPos.y, holoPos.z, new Vector3d(0,0,0), selectedItem.radius, selectedItem.mass, selectedItem.tilt, selectedItem.rotationPeriod, selectedItem.temperature, selectedItem.planetTex, selectedItem.uvMap, selectedItem.type, selectedItem.isRigid);
-                if (holoPlanet.type.equals("Hole")) hasBH = true;
-                startPos.set(holoPos); drawLine = true;
-            } else if (currentSpawnMode == SpawnMode.STATIC) {
-                holoPos.set(getHologramPos(selectedItem.radius));
-                holoPlanet = new Planet(selectedItem.name, holoPos.x, holoPos.y, holoPos.z, new Vector3d(0,0,0), selectedItem.radius, selectedItem.mass, selectedItem.tilt, selectedItem.rotationPeriod, selectedItem.temperature, selectedItem.planetTex, selectedItem.uvMap, selectedItem.type, selectedItem.isRigid);
-                if (holoPlanet.type.equals("Hole")) hasBH = true;
-            } else if (currentSpawnMode == SpawnMode.LAUNCH) {
-                org.joml.Vector3f rayF = CameraManager.getMouseRay();
-                Vector3d forward = new Vector3d(rayF.x, rayF.y, rayF.z);
-                startPos.set(CameraManager.pos).add(new Vector3d(forward).mul(selectedItem.radius * 2.5 + 5.0));
-                drawLine = true;
+                isVulkanInitialized = true;
+            } else if (fWidth != spacesb.remake.render.SBoxVulkanCanvas.canvasWidth || fHeight != spacesb.remake.render.SBoxVulkanCanvas.canvasHeight) {
+                org.lwjgl.vulkan.VK10.vkDeviceWaitIdle(spacesb.remake.render.SBoxVulkanCore.logicalDevice);
+                spacesb.remake.render.SBoxVulkanSwapchain.destroySwapchain();
+                spacesb.remake.render.SBoxVulkanCanvas.destroyCanvas();
+
+                spacesb.remake.render.SBoxVulkanSwapchain.initSwapchain(window, fWidth, fHeight);
+                spacesb.remake.render.SBoxVulkanCanvas.createCanvas(fWidth, fHeight);
+                spacesb.remake.render.SBoxCompute.updateDescriptorSet();
             }
-        }
 
-        CameraManager.update(holoPlanet);
+            int uiScale = Math.max(1, fHeight / 480);
+            int logicalW = fWidth / uiScale;
+            int logicalH = fHeight / uiScale;
 
-        double maxRenderDist = 1000000.0;
-        if (CameraManager.isLocked && CameraManager.lockedTarget != null) {
-            maxRenderDist = Math.max(maxRenderDist, CameraManager.lockedTarget.radius * 20.0);
-        }
-        maxRenderDist = Math.max(maxRenderDist, Math.abs(CameraManager.pos.y) * 10.0);
+            org.lwjgl.vulkan.VkDevice device = spacesb.remake.render.SBoxVulkanCore.logicalDevice;
+            java.nio.IntBuffer pImageIndex = stack.mallocInt(1);
 
-        float zFar = (float) (maxRenderDist * 10.0);
-        float zNear = Math.max(0.1f, zFar / 10000000.0f);
-
-        float aspect = (float) client.getWindow().getFramebufferWidth() / client.getWindow().getFramebufferHeight();
-        Matrix4f projMatrix = new Matrix4f().setPerspective((float) Math.toRadians(70), aspect, zNear, zFar);
-
-        Matrix4f rotViewMatrix = new Matrix4f().rotateX((float) Math.toRadians(CameraManager.rot.x)).rotateY((float) Math.toRadians(CameraManager.rot.y));
-
-        if (!isMusicStarted || currentRealTime - lastMusicPlayTime >= 168.0) {
-            lastMusicPlayTime = currentRealTime;
-            isMusicStarted = true;
-            net.minecraft.sound.SoundEvent musicEvent = net.minecraft.sound.SoundEvent.of(Identifier.of("spacesb-remake", "space_music"));
-            client.getSoundManager().play(net.minecraft.client.sound.PositionedSoundInstance.master(musicEvent, 1.0f, 1.0f));
-        }
-
-        RenderSystem.depthMask(false);
-        Tessellator tessellator = Tessellator.getInstance();
-
-        Matrix4f skyProj = new Matrix4f().setPerspective((float) Math.toRadians(70), aspect, 0.1f, 1000.0f);
-        RenderSystem.setProjectionMatrix(skyProj, VertexSorter.BY_DISTANCE);
-
-        float skyS = 100.0f;
-        SpaceUI.drawSkyFace(tessellator, rotViewMatrix, SKY_FRONT, -skyS, skyS, -skyS, -skyS, -skyS, -skyS, skyS, -skyS, -skyS, skyS, skyS, -skyS);
-        SpaceUI.drawSkyFace(tessellator, rotViewMatrix, SKY_BACK, skyS, skyS, skyS, skyS, -skyS, skyS, -skyS, -skyS, skyS, -skyS, skyS, skyS);
-        SpaceUI.drawSkyFace(tessellator, rotViewMatrix, SKY_LEFT, -skyS, skyS, skyS, -skyS, -skyS, skyS, -skyS, -skyS, -skyS, -skyS, skyS, -skyS);
-        SpaceUI.drawSkyFace(tessellator, rotViewMatrix, SKY_RIGHT, skyS, skyS, -skyS, skyS, -skyS, -skyS, skyS, -skyS, skyS, skyS, skyS, skyS);
-        SpaceUI.drawSkyFace(tessellator, rotViewMatrix, SKY_TOP, -skyS, skyS, skyS, -skyS, skyS, -skyS, skyS, skyS, -skyS, skyS, skyS, skyS);
-        SpaceUI.drawSkyFace(tessellator, rotViewMatrix, SKY_BOTTOM, -skyS, -skyS, -skyS, -skyS, -skyS, skyS, skyS, -skyS, skyS, skyS, -skyS, -skyS);
-
-        RenderSystem.setProjectionMatrix(projMatrix, VertexSorter.BY_DISTANCE);
-        RenderSystem.depthMask(true);
-
-        if (holoPlanet != null) {
-            for (Planet p : planets) {
-                if (p.pos.distance(holoPlanet.pos) < p.radius + selectedItem.radius) { validSpawn = false; break; }
-            }
-        }
-
-        MatrixStack matrices = context.getMatrices();
-        matrices.push();
-        matrices.peek().getPositionMatrix().identity();
-        matrices.multiply(new Quaternionf().rotationX((float) Math.toRadians(CameraManager.rot.x)));
-        matrices.multiply(new Quaternionf().rotationY((float) Math.toRadians(CameraManager.rot.y)));
-
-        Matrix4f fullViewMatrix = matrices.peek().getPositionMatrix();
-
-        double camX = CameraManager.pos.x;
-        double camY = CameraManager.pos.y;
-        double camZ = CameraManager.pos.z;
-
-        float[] suns = new float[64];
-        for (int i = 0; i < 64; i++) suns[i] = -2.0f;
-        int sunCount = 0;
-
-        for (Planet sp : planets) {
-            if (sp.type.equals("Star") && sunCount < 16) {
-                suns[sunCount * 4] = (float)(sp.pos.x - camX);
-                suns[sunCount * 4 + 1] = (float)(sp.pos.y - camY);
-                suns[sunCount * 4 + 2] = (float)(sp.pos.z - camZ);
-                suns[sunCount * 4 + 3] = -1.0f;
-                sunCount++;
-            }
-        }
-        if (holoPlanet != null && holoPlanet.type.equals("Star") && sunCount < 16) {
-            suns[sunCount * 4] = (float)(holoPlanet.pos.x - camX);
-            suns[sunCount * 4 + 1] = (float)(holoPlanet.pos.y - camY);
-            suns[sunCount * 4 + 2] = (float)(holoPlanet.pos.z - camZ);
-            suns[sunCount * 4 + 3] = -1.0f;
-            sunCount++;
-        }
-
-        for (Particle pt : particles) {
-            if (sunCount < 16 && pt.life > 0) {
-                float aRatio = (float) Math.max(0, pt.life / pt.maxLife);
-                float power = aRatio * aRatio * 80.0f;
-                if (power > 0.1f) {
-                    suns[sunCount * 4] = (float)(pt.pos.x - camX);
-                    suns[sunCount * 4 + 1] = (float)(pt.pos.y - camY);
-                    suns[sunCount * 4 + 2] = (float)(pt.pos.z - camZ);
-                    suns[sunCount * 4 + 3] = power;
-                    sunCount++;
+            synchronized (STATE_LOCK) {
+                SpaceInput.processInput(window, logicalW, logicalH, uiScale);
+                if (planetsNeedSort) {
+                    planets.sort(WARP_GROUP_COMPARATOR);
+                    planetsNeedSort = false;
                 }
-            }
-        }
-
-        for (Planet pl : planets) {
-            for (Scorch s : pl.scorches) {
-                if (sunCount < 16 && s.life > 0) {
-                    float aRatio = (float) Math.max(0, s.life / s.maxLife);
-                    float power = aRatio * aRatio * 8.0f;
-                    if (power > 0.1f) {
-
-                        double rot = pl.currentAngle;
-
-                        double fl = 0;
-                        if(enableCentrifugalForce && !pl.type.equals("Hole") && pl.mass>0) {
-                            double rP = Math.max(0.1, pl.rotationPeriod);
-                            fl = (0.011 * (pl.radius * pl.radius * pl.radius) / (pl.mass * rP * rP));
-                            if (fl > 0.15) fl = 0.15;
-                        }
-
-                        org.joml.Vector3f localNormF = new org.joml.Vector3f((float)s.localNorm.x, (float)s.localNorm.y, (float)s.localNorm.z);
-                        Matrix4f tModel = new Matrix4f().rotateZ((float)Math.toRadians(pl.tilt)).rotateY((float)Math.toRadians(-rot)).scale(1.0f + (float)fl * 0.5f, 1.0f - (float)fl, 1.0f + (float)fl * 0.5f);
-                        tModel.transformPosition(localNormF);
-
-                        Vector3d worldP = new Vector3d(pl.pos).add(new Vector3d(localNormF.x, localNormF.y, localNormF.z).mul(pl.radius));
-                        suns[sunCount * 4] = (float)(worldP.x - camX);
-                        suns[sunCount * 4 + 1] = (float)(worldP.y - camY);
-                        suns[sunCount * 4 + 2] = (float)(worldP.z - camZ);
-                        suns[sunCount * 4 + 3] = power;
-                        sunCount++;
-                    }
+                PhysicsEngine.tick(dtReal);
+                if (planetsNeedSort) {
+                    planets.sort(WARP_GROUP_COMPARATOR);
+                    planetsNeedSort = false;
                 }
-            }
-        }
+                CameraManager.update(null);
 
-        double minBHDist = Double.MAX_VALUE;
-        for (Planet p : planets) {
-            if (p.type.equals("Hole")) {
-                hasBH = true;
-                double d = CameraManager.pos.distance(p.pos);
-                if (d < minBHDist) minBHDist = d;
-            }
-        }
-        if (holoPlanet != null && holoPlanet.type.equals("Hole")) {
-            hasBH = true;
-            double d = CameraManager.pos.distance(holoPlanet.pos);
-            if (d < minBHDist) minBHDist = d;
-        }
-
-        List<Planet> bgPlanets = new ArrayList<>();
-        List<Planet> fgPlanets = new ArrayList<>();
-        for (Planet p : planets) {
-            if (!p.type.equals("Hole")) {
-                double d = CameraManager.pos.distance(p.pos);
-                if (!hasBH || d >= minBHDist) bgPlanets.add(p);
-                else fgPlanets.add(p);
-            }
-        }
-
-        RenderSystem.enableDepthTest();
-        RenderSystem.enableCull();
-        RenderSystem.enableBlend();
-        RenderSystem.defaultBlendFunc();
-
-        for (Planet p : bgPlanets) {
-            boolean flash = editFlashlight && CameraManager.isLocked && CameraManager.lockedTarget == p;
-            Shader.renderPlanet(fullViewMatrix, projMatrix, p, suns, sunCount, CameraManager.pos, 1.0f, 1.0f, 1.0f, 1.0f, false, flash);
-        }
-
-        if (holoPlanet != null && !holoPlanet.type.equals("Hole") && currentSpawnMode != SpawnMode.LAUNCH) {
-            double d = CameraManager.pos.distance(holoPlanet.pos);
-            if (!hasBH || d >= minBHDist) {
-                float r = 1.0f, g = validSpawn ? 1.0f : 0.2f, b = validSpawn ? 1.0f : 0.2f;
-                Shader.renderPlanet(fullViewMatrix, projMatrix, holoPlanet, suns, sunCount, CameraManager.pos, r, g, b, 0.6f, false, false);
-            }
-        }
-        RenderSystem.disableCull();
-
-        Matrix4f particleMvp = new Matrix4f(projMatrix).mul(fullViewMatrix);
-        Matrix4f invView = new Matrix4f(fullViewMatrix).invert();
-
-        org.joml.Vector3f camRight = new org.joml.Vector3f(1, 0, 0); invView.transformDirection(camRight); camRight.normalize();
-        org.joml.Vector3f camUp = new org.joml.Vector3f(0, 1, 0); invView.transformDirection(camUp); camUp.normalize();
-
-        RenderSystem.enablePolygonOffset();
-        RenderSystem.polygonOffset(-3.0f, -3.0f);
-        Shader.renderScorches(fullViewMatrix, projMatrix, planets);
-        RenderSystem.disablePolygonOffset();
-
-        boolean hasVisibleParticles = false;
-        for (Particle pt : particles) {
-            if (pt.life > 0) { hasVisibleParticles = true; break; }
-        }
-
-        if (hasVisibleParticles) {
-            RenderSystem.setShaderTexture(0, TEX_EXPLOSION);
-            RenderSystem.setShader(GameRenderer::getPositionTexColorProgram);
-            RenderSystem.enableBlend();
-            RenderSystem.defaultBlendFunc();
-            RenderSystem.depthMask(false);
-            RenderSystem.enableDepthTest();
-
-            BufferBuilder pBuffer = tessellator.begin(VertexFormat.DrawMode.QUADS, VertexFormats.POSITION_TEXTURE_COLOR);
-            boolean pDrawn = false;
-
-            for (Particle pt : particles) {
-                if (pt.life <= 0) continue;
-                int a = (int)(255 * Math.max(0, pt.life / pt.maxLife));
-                if (a < 5) continue;
-
-                pDrawn = true;
-                float s = (float) pt.size;
-                float cx = (float)(pt.pos.x - camX);
-                float cy = (float)(pt.pos.y - camY);
-                float cz = (float)(pt.pos.z - camZ);
-
-                float x1 = cx - camRight.x * s - camUp.x * s; float y1 = cy - camRight.y * s - camUp.y * s; float z1 = cz - camRight.z * s - camUp.z * s;
-                float x2 = cx + camRight.x * s - camUp.x * s; float y2 = cy + camRight.y * s - camUp.y * s; float z2 = cz + camRight.z * s - camUp.z * s;
-                float x3 = cx + camRight.x * s + camUp.x * s; float y3 = cy + camRight.y * s + camUp.y * s; float z3 = cz + camRight.z * s + camUp.z * s;
-                float x4 = cx - camRight.x * s + camUp.x * s; float y4 = cy - camRight.y * s + camUp.y * s; float z4 = cz - camRight.z * s + camUp.z * s;
-
-                pBuffer.vertex(fullViewMatrix, x1, y1, z1).texture(0f, 1f).color(pt.r, pt.g, pt.b, a);
-                pBuffer.vertex(fullViewMatrix, x2, y2, z2).texture(1f, 1f).color(pt.r, pt.g, pt.b, a);
-                pBuffer.vertex(fullViewMatrix, x3, y3, z3).texture(1f, 0f).color(pt.r, pt.g, pt.b, a);
-                pBuffer.vertex(fullViewMatrix, x4, y4, z4).texture(0f, 0f).color(pt.r, pt.g, pt.b, a);
-            }
-            if (pDrawn) {
-                BufferRenderer.drawWithGlobalProgram(pBuffer.end());
-            }
-        }
-
-        boolean hasVisibleFragments = false;
-        for (Fragment f : fragments) {
-            if (f.life > 0) { hasVisibleFragments = true; break; }
-        }
-
-        if (hasVisibleFragments) {
-            RenderSystem.setShaderTexture(0, TEX_FRAGMENT);
-            RenderSystem.setShader(GameRenderer::getPositionTexColorProgram);
-            RenderSystem.enableBlend();
-            RenderSystem.defaultBlendFunc();
-            RenderSystem.disableCull();
-            RenderSystem.depthMask(true);
-
-            BufferBuilder fBuffer = tessellator.begin(VertexFormat.DrawMode.QUADS, VertexFormats.POSITION_TEXTURE_COLOR);
-            boolean fDrawn = false;
-
-            for (Fragment f : fragments) {
-                if (f.life <= 0) continue;
-
-                int a = 255;
-
-                fDrawn = true;
-                Matrix4f fMat = new Matrix4f(fullViewMatrix);
-                fMat.translate((float)(f.pos.x - camX), (float)(f.pos.y - camY), (float)(f.pos.z - camZ));
-                fMat.rotate((float)Math.toRadians(f.angle), f.rotAxis);
-                float s = (float)f.size;
-
-                fBuffer.vertex(fMat, -s, -s,  s).texture(f.u1, f.v2).color(255, 255, 255, a);
-                fBuffer.vertex(fMat,  s, -s,  s).texture(f.u2, f.v2).color(255, 255, 255, a);
-                fBuffer.vertex(fMat,  s,  s,  s).texture(f.u2, f.v1).color(255, 255, 255, a);
-                fBuffer.vertex(fMat, -s,  s,  s).texture(f.u1, f.v1).color(255, 255, 255, a);
-                fBuffer.vertex(fMat,  s, -s, -s).texture(f.u1, f.v2).color(255, 255, 255, a);
-                fBuffer.vertex(fMat, -s, -s, -s).texture(f.u2, f.v2).color(255, 255, 255, a);
-                fBuffer.vertex(fMat, -s,  s, -s).texture(f.u2, f.v1).color(255, 255, 255, a);
-                fBuffer.vertex(fMat,  s,  s, -s).texture(f.u1, f.v1).color(255, 255, 255, a);
-                fBuffer.vertex(fMat, -s,  s,  s).texture(f.u1, f.v2).color(255, 255, 255, a);
-                fBuffer.vertex(fMat,  s,  s,  s).texture(f.u2, f.v2).color(255, 255, 255, a);
-                fBuffer.vertex(fMat,  s,  s, -s).texture(f.u2, f.v1).color(255, 255, 255, a);
-                fBuffer.vertex(fMat, -s,  s, -s).texture(f.u1, f.v1).color(255, 255, 255, a);
-                fBuffer.vertex(fMat, -s, -s, -s).texture(f.u1, f.v2).color(255, 255, 255, a);
-                fBuffer.vertex(fMat,  s, -s, -s).texture(f.u2, f.v2).color(255, 255, 255, a);
-                fBuffer.vertex(fMat,  s, -s,  s).texture(f.u2, f.v1).color(255, 255, 255, a);
-                fBuffer.vertex(fMat, -s, -s,  s).texture(f.u1, f.v1).color(255, 255, 255, a);
-                fBuffer.vertex(fMat, -s, -s, -s).texture(f.u1, f.v2).color(255, 255, 255, a);
-                fBuffer.vertex(fMat, -s, -s,  s).texture(f.u2, f.v2).color(255, 255, 255, a);
-                fBuffer.vertex(fMat, -s,  s,  s).texture(f.u2, f.v1).color(255, 255, 255, a);
-                fBuffer.vertex(fMat, -s,  s, -s).texture(f.u1, f.v1).color(255, 255, 255, a);
-                fBuffer.vertex(fMat,  s, -s,  s).texture(f.u1, f.v2).color(255, 255, 255, a);
-                fBuffer.vertex(fMat,  s, -s, -s).texture(f.u2, f.v2).color(255, 255, 255, a);
-                fBuffer.vertex(fMat,  s,  s, -s).texture(f.u2, f.v1).color(255, 255, 255, a);
-                fBuffer.vertex(fMat,  s,  s,  s).texture(f.u1, f.v1).color(255, 255, 255, a);
-            }
-            if (fDrawn) {
-                BufferRenderer.drawWithGlobalProgram(fBuffer.end());
-            }
-        }
-        RenderSystem.enableCull();
-
-        RenderSystem.enableBlend();
-        RenderSystem.defaultBlendFunc();
-        RenderSystem.setShaderColor(1.0f, 1.0f, 1.0f, 1.0f);
-        RenderSystem.depthMask(false);
-        RenderSystem.enableDepthTest();
-        RenderSystem.setShader(GameRenderer::getPositionColorProgram);
-
-        BufferBuilder lineBuffer = tessellator.begin(VertexFormat.DrawMode.DEBUG_LINES, VertexFormats.POSITION_COLOR);
-        lineBuffer.vertex(fullViewMatrix, 0, 0, 0).color(0, 0, 0, 0);
-        lineBuffer.vertex(fullViewMatrix, 0, 0, 0).color(0, 0, 0, 0);
-
-        if (showTrails) {
-            for (Planet p : planets) {
-                if (p.trail.isEmpty()) continue;
-
-                Object[] snap = p.trail.toArray();
-                if (snap.length < 2) continue;
-
-                for (int i = 0; i < snap.length - 1; i++) {
-                    Vector3d v1 = (Vector3d) snap[i];
-                    Vector3d v2 = (Vector3d) snap[i+1];
-                    int alpha = (int)(255.0f * (i / (float)snap.length));
-
-                    lineBuffer.vertex(fullViewMatrix, (float)(v1.x - camX), (float)(v1.y - camY), (float)(v1.z - camZ)).color(p.rColor, p.gColor, p.bColor, alpha);
-                    lineBuffer.vertex(fullViewMatrix, (float)(v2.x - camX), (float)(v2.y - camY), (float)(v2.z - camZ)).color(p.rColor, p.gColor, p.bColor, alpha);
-                }
-
-                Vector3d last = (Vector3d) snap[snap.length - 1];
-                Vector3d dirToPlanet = new Vector3d(p.pos).sub(last);
-                double distToCenter = dirToPlanet.length();
-
-                if (distToCenter > p.radius) {
-                    Vector3d surfacePos = new Vector3d(last).add(dirToPlanet.normalize().mul(distToCenter - p.radius));
-                    lineBuffer.vertex(fullViewMatrix, (float)(last.x - camX), (float)(last.y - camY), (float)(last.z - camZ)).color(p.rColor, p.gColor, p.bColor, 255);
-                    lineBuffer.vertex(fullViewMatrix, (float)(surfacePos.x - camX), (float)(surfacePos.y - camY), (float)(surfacePos.z - camZ)).color(p.rColor, p.gColor, p.bColor, 255);
-                }
-            }
-        }
-
-        lineStart3D = null; lineEnd3D = null; textMidPoint3D = null;
-
-        if (drawLine) {
-            calculateSpawnVelocity(startPos, holoUp);
-
-            if (currentSpawnMode == SpawnMode.ORBIT && orbitTarget != null && planets.contains(orbitTarget)) {
-                Planet attractor = orbitTarget;
-                lineBuffer.vertex(fullViewMatrix, (float)(startPos.x - camX), (float)(startPos.y - camY), (float)(startPos.z - camZ)).color(255, 255, 255, 255);
-                lineBuffer.vertex(fullViewMatrix, (float)(attractor.pos.x - camX), (float)(attractor.pos.y - camY), (float)(attractor.pos.z - camZ)).color(255, 255, 255, 255);
-                lineStart3D = new Vector3d(startPos); lineEnd3D = new Vector3d(attractor.pos); textMidPoint3D = new Vector3d(startPos).add(attractor.pos).mul(0.5);
-
-                Vector3d R = new Vector3d(startPos).sub(attractor.pos); Vector3d T = new Vector3d(holoUp).cross(R); double orbitRadius = R.length();
-                if (orbitRadius > 0.001) {
-                    R.normalize(); T.normalize(); int segments = 100;
-                    for (int i = 0; i < segments; i++) {
-                        double a1 = 2.0 * Math.PI * i / segments, a2 = 2.0 * Math.PI * (i + 1) / segments;
-                        double x1 = attractor.pos.x + Math.cos(a1)*orbitRadius*R.x + Math.sin(a1)*orbitRadius*T.x;
-                        double y1 = attractor.pos.y + Math.cos(a1)*orbitRadius*R.y + Math.sin(a1)*orbitRadius*T.y;
-                        double z1 = attractor.pos.z + Math.cos(a1)*orbitRadius*R.z + Math.sin(a1)*orbitRadius*T.z;
-                        double x2 = attractor.pos.x + Math.cos(a2)*orbitRadius*R.x + Math.sin(a2)*orbitRadius*T.x;
-                        double y2 = attractor.pos.y + Math.cos(a2)*orbitRadius*R.y + Math.sin(a2)*orbitRadius*T.y;
-                        double z2 = attractor.pos.z + Math.cos(a2)*orbitRadius*R.z + Math.sin(a2)*orbitRadius*T.z;
-                        lineBuffer.vertex(fullViewMatrix, (float)(x1 - camX), (float)(y1 - camY), (float)(z1 - camZ)).color(255, 255, 255, 200);
-                        lineBuffer.vertex(fullViewMatrix, (float)(x2 - camX), (float)(y2 - camY), (float)(z2 - camZ)).color(255, 255, 255, 200);
-                    }
-                }
-            } else if (currentSpawnMode == SpawnMode.LAUNCH) {
-                org.joml.Vector3f rayF = CameraManager.getMouseRay();
-                Vector3d forward = new Vector3d(rayF.x, rayF.y, rayF.z);
-                lineStart3D = new Vector3d(startPos); lineEnd3D = new Vector3d(startPos).add(new Vector3d(forward).mul(50.0));
-
-                Vector3d predPos = new Vector3d(startPos), prevPos = new Vector3d(predPos);
-                double speedInKmS = getSpeedInKmS(); double simDt = 0.5; double distBlocks = speedInKmS / BLOCK_TO_KM;
-                for(int i=0; i<100; i++) {
-                    predPos.add(new Vector3d(forward).mul(distBlocks * simDt));
-                    lineBuffer.vertex(fullViewMatrix, (float)(prevPos.x - camX), (float)(prevPos.y - camY), (float)(prevPos.z - camZ)).color(255, 255, 255, 255);
-                    lineBuffer.vertex(fullViewMatrix, (float)(predPos.x - camX), (float)(prevPos.y - camY), (float)(prevPos.z - camZ)).color(255, 255, 255, 255);
-                    prevPos.set(predPos);
-                }
-            }
-        }
-
-        if (showGrid) {
-            double gridBase = Math.max(10.0, Math.abs(CameraManager.pos.y));
-            if (CameraManager.isLocked && CameraManager.lockedTarget != null) {
-                gridBase = Math.max(gridBase, CameraManager.lockedTarget.radius * 2.0);
-            }
-            double logY = Math.log10(gridBase);
-            double floorLog = Math.floor(logY);
-            double minorStep = Math.pow(10, floorLog);
-            double minorAlphaMod = Math.pow(1.0 - (logY - floorLog), 1.5);
-
-            double renderDist = minorStep * 200.0;
-            float fRenderDist = (float)renderDist;
-
-            double snapX = Math.floor(camX / minorStep) * minorStep;
-            double snapZ = Math.floor(camZ / minorStep) * minorStep;
-            float relY = (float)(-camY);
-
-            for (double i = -renderDist; i <= renderDist; i += minorStep) {
-                double worldX = snapX + i;
-                float relX = (float)(worldX - camX);
-
-                float distToLine = Math.abs(relX);
-                float fadeCenter = (float)Math.pow(1.0 - Math.min(1.0, distToLine / fRenderDist), 3.0);
-                if (fadeCenter <= 0) continue;
-
-                long indexX = Math.round(worldX / minorStep);
-                boolean isMajor = (indexX % 10 == 0);
-                float baseAlpha = isMajor ? 180f : 120f * (float)minorAlphaMod;
-                int color = isMajor ? 255 : 180;
-                int alphaCenter = (int)(baseAlpha * fadeCenter);
-
-                if (alphaCenter > 2) {
-                    float dist1 = (float)Math.sqrt(relX*relX + fRenderDist*fRenderDist);
-                    float a1 = baseAlpha * (float)Math.pow(1.0 - Math.min(1.0f, dist1 / fRenderDist), 3.0);
-
-                    lineBuffer.vertex(fullViewMatrix, relX, relY, -fRenderDist).color(color, color, color, (int)Math.max(0, a1));
-                    lineBuffer.vertex(fullViewMatrix, relX, relY, 0.0f).color(color, color, color, alphaCenter);
-
-                    lineBuffer.vertex(fullViewMatrix, relX, relY, 0.0f).color(color, color, color, alphaCenter);
-                    lineBuffer.vertex(fullViewMatrix, relX, relY, fRenderDist).color(color, color, color, (int)Math.max(0, a1));
-                }
+                org.lwjgl.vulkan.KHRSwapchain.vkAcquireNextImageKHR(device, spacesb.remake.render.SBoxVulkanSwapchain.swapchain, -1L, spacesb.remake.render.SBoxVulkanSwapchain.imageAvailableSemaphore, org.lwjgl.vulkan.VK10.VK_NULL_HANDLE, pImageIndex);
+                spacesb.remake.render.SBoxCompute.renderSpace(fWidth, fHeight);
+                SpaceUI.renderDirectUI(window, logicalW, logicalH, uiScale);
             }
 
-            for (double i = -renderDist; i <= renderDist; i += minorStep) {
-                double worldZ = snapZ + i;
-                float relZ = (float)(worldZ - camZ);
+            int imageIndex = pImageIndex.get(0);
 
-                float distToLine = Math.abs(relZ);
-                float fadeCenter = (float)Math.pow(1.0 - Math.min(1.0, distToLine / fRenderDist), 3.0);
-                if (fadeCenter <= 0) continue;
+            org.lwjgl.vulkan.VkCommandBuffer cmd = spacesb.remake.render.SBoxVulkanCore.copyCommandBuffer;
+            org.lwjgl.vulkan.VK10.vkResetCommandBuffer(cmd, 0);
 
-                long indexZ = Math.round(worldZ / minorStep);
-                boolean isMajor = (indexZ % 10 == 0);
-                float baseAlpha = isMajor ? 180f : 120f * (float)minorAlphaMod;
-                int color = isMajor ? 255 : 180;
-                int alphaCenter = (int)(baseAlpha * fadeCenter);
+            org.lwjgl.vulkan.VkCommandBufferBeginInfo beginInfo = org.lwjgl.vulkan.VkCommandBufferBeginInfo.calloc(stack).sType(org.lwjgl.vulkan.VK10.VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO);
+            org.lwjgl.vulkan.VK10.vkBeginCommandBuffer(cmd, beginInfo);
 
-                if (alphaCenter > 2) {
-                    float dist1 = (float)Math.sqrt(fRenderDist*fRenderDist + relZ*relZ);
-                    float a1 = baseAlpha * (float)Math.pow(1.0 - Math.min(1.0f, dist1 / fRenderDist), 3.0);
+            org.lwjgl.vulkan.VkImageMemoryBarrier.Buffer initSwapBarrier = org.lwjgl.vulkan.VkImageMemoryBarrier.calloc(1, stack)
+                    .sType(org.lwjgl.vulkan.VK10.VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER)
+                    .oldLayout(org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_UNDEFINED)
+                    .newLayout(org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
+                    .srcAccessMask(0)
+                    .dstAccessMask(org.lwjgl.vulkan.VK10.VK_ACCESS_TRANSFER_WRITE_BIT)
+                    .srcQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED).dstQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED)
+                    .image(spacesb.remake.render.SBoxVulkanSwapchain.swapchainImages[imageIndex]);
+            initSwapBarrier.subresourceRange().aspectMask(org.lwjgl.vulkan.VK10.VK_IMAGE_ASPECT_COLOR_BIT).levelCount(1).layerCount(1);
+            org.lwjgl.vulkan.VK10.vkCmdPipelineBarrier(cmd, org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_TRANSFER_BIT, 0, null, null, initSwapBarrier);
 
-                    lineBuffer.vertex(fullViewMatrix, -fRenderDist, relY, relZ).color(color, color, color, (int)Math.max(0, a1));
-                    lineBuffer.vertex(fullViewMatrix, 0.0f, relY, relZ).color(color, color, color, alphaCenter);
+            org.lwjgl.vulkan.VkImageBlit.Buffer blit = org.lwjgl.vulkan.VkImageBlit.calloc(1, stack);
+            blit.srcOffsets(1).set(fWidth, fHeight, 1);
+            blit.srcSubresource().aspectMask(org.lwjgl.vulkan.VK10.VK_IMAGE_ASPECT_COLOR_BIT).layerCount(1);
+            blit.dstOffsets(1).set(fWidth, fHeight, 1);
+            blit.dstSubresource().aspectMask(org.lwjgl.vulkan.VK10.VK_IMAGE_ASPECT_COLOR_BIT).layerCount(1);
+            org.lwjgl.vulkan.VK10.vkCmdBlitImage(cmd, spacesb.remake.render.SBoxVulkanCanvas.canvasImage, org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_GENERAL, spacesb.remake.render.SBoxVulkanSwapchain.swapchainImages[imageIndex], org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, blit, org.lwjgl.vulkan.VK10.VK_FILTER_NEAREST);
 
-                    lineBuffer.vertex(fullViewMatrix, 0.0f, relY, relZ).color(color, color, color, alphaCenter);
-                    lineBuffer.vertex(fullViewMatrix, fRenderDist, relY, relZ).color(color, color, color, (int)Math.max(0, a1));
-                }
-            }
+            org.lwjgl.vulkan.VkImageMemoryBarrier.Buffer uiBarrier = org.lwjgl.vulkan.VkImageMemoryBarrier.calloc(1, stack)
+                    .sType(org.lwjgl.vulkan.VK10.VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER)
+                    .oldLayout(org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
+                    .newLayout(org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
+                    .srcAccessMask(org.lwjgl.vulkan.VK10.VK_ACCESS_TRANSFER_WRITE_BIT)
+                    .dstAccessMask(org.lwjgl.vulkan.VK10.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT)
+                    .srcQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED).dstQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED)
+                    .image(spacesb.remake.render.SBoxVulkanSwapchain.swapchainImages[imageIndex]);
+            uiBarrier.subresourceRange().aspectMask(org.lwjgl.vulkan.VK10.VK_IMAGE_ASPECT_COLOR_BIT).levelCount(1).layerCount(1);
+            org.lwjgl.vulkan.VK10.vkCmdPipelineBarrier(cmd, org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_TRANSFER_BIT, org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, null, null, uiBarrier);
+
+            spacesb.remake.render.SBoxVulkanUI.renderUI(cmd, spacesb.remake.render.SBoxVulkanSwapchain.swapchainImageViews[imageIndex], fWidth, fHeight, logicalW, logicalH);
+
+            org.lwjgl.vulkan.VkImageMemoryBarrier.Buffer presentBarrier = org.lwjgl.vulkan.VkImageMemoryBarrier.calloc(1, stack)
+                    .sType(org.lwjgl.vulkan.VK10.VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER)
+                    .oldLayout(org.lwjgl.vulkan.VK10.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
+                    .newLayout(org.lwjgl.vulkan.KHRSwapchain.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR)
+                    .srcAccessMask(org.lwjgl.vulkan.VK10.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT)
+                    .dstAccessMask(0)
+                    .srcQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED).dstQueueFamilyIndex(org.lwjgl.vulkan.VK10.VK_QUEUE_FAMILY_IGNORED)
+                    .image(spacesb.remake.render.SBoxVulkanSwapchain.swapchainImages[imageIndex]);
+            presentBarrier.subresourceRange().aspectMask(org.lwjgl.vulkan.VK10.VK_IMAGE_ASPECT_COLOR_BIT).levelCount(1).layerCount(1);
+            org.lwjgl.vulkan.VK10.vkCmdPipelineBarrier(cmd, org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, null, null, presentBarrier);
+
+            org.lwjgl.vulkan.VK10.vkEndCommandBuffer(cmd);
+
+            org.lwjgl.vulkan.VkSubmitInfo submitInfo = org.lwjgl.vulkan.VkSubmitInfo.calloc(stack).sType(org.lwjgl.vulkan.VK10.VK_STRUCTURE_TYPE_SUBMIT_INFO)
+                    .waitSemaphoreCount(1).pWaitSemaphores(stack.longs(spacesb.remake.render.SBoxVulkanSwapchain.imageAvailableSemaphore))
+                    .pWaitDstStageMask(stack.ints(org.lwjgl.vulkan.VK10.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT))
+                    .pCommandBuffers(stack.pointers(cmd))
+                    .pSignalSemaphores(stack.longs(spacesb.remake.render.SBoxVulkanSwapchain.renderFinishedSemaphore));
+
+            org.lwjgl.vulkan.VK10.vkQueueSubmit(spacesb.remake.render.SBoxVulkanCore.graphicsQueue, submitInfo, org.lwjgl.vulkan.VK10.VK_NULL_HANDLE);
+
+            org.lwjgl.vulkan.VkPresentInfoKHR presentInfo = org.lwjgl.vulkan.VkPresentInfoKHR.calloc(stack).sType(org.lwjgl.vulkan.KHRSwapchain.VK_STRUCTURE_TYPE_PRESENT_INFO_KHR)
+                    .pWaitSemaphores(stack.longs(spacesb.remake.render.SBoxVulkanSwapchain.renderFinishedSemaphore))
+                    .swapchainCount(1).pSwapchains(stack.longs(spacesb.remake.render.SBoxVulkanSwapchain.swapchain))
+                    .pImageIndices(pImageIndex);
+
+            org.lwjgl.vulkan.KHRSwapchain.vkQueuePresentKHR(spacesb.remake.render.SBoxVulkanCore.graphicsQueue, presentInfo);
+            org.lwjgl.vulkan.VK10.vkQueueWaitIdle(spacesb.remake.render.SBoxVulkanCore.graphicsQueue);
         }
-
-        BufferRenderer.drawWithGlobalProgram(lineBuffer.end());
-        RenderSystem.depthMask(true);
-
-        if (hasBH) {
-            Shader.renderAllLensing(planets, holoPlanet, rotViewMatrix, projMatrix);
-        }
-
-        RenderSystem.enableDepthTest();
-        RenderSystem.enableCull();
-        RenderSystem.enableBlend();
-        RenderSystem.defaultBlendFunc();
-        for (Planet p : planets) {
-            if (p.type.equals("Hole")) Shader.renderPlanet(fullViewMatrix, projMatrix, p, suns, sunCount, CameraManager.pos, 1.0f, 1.0f, 1.0f, 1.0f, true, false);
-        }
-        if (holoPlanet != null && holoPlanet.type.equals("Hole") && currentSpawnMode != SpawnMode.LAUNCH) {
-            Shader.renderPlanet(fullViewMatrix, projMatrix, holoPlanet, suns, sunCount, CameraManager.pos, 1.0f, 1.0f, 1.0f, 1.0f, true, false);
-        }
-        RenderSystem.disableCull();
-
-        if (hasBH) {
-            RenderSystem.enableDepthTest();
-            RenderSystem.enableCull();
-            RenderSystem.enableBlend();
-            RenderSystem.defaultBlendFunc();
-
-            for (Planet p : fgPlanets) {
-                boolean flash = editFlashlight && CameraManager.isLocked && CameraManager.lockedTarget == p;
-                Shader.renderPlanet(fullViewMatrix, projMatrix, p, suns, sunCount, CameraManager.pos, 1.0f, 1.0f, 1.0f, 1.0f, false, flash);
-            }
-
-            if (holoPlanet != null && !holoPlanet.type.equals("Hole") && currentSpawnMode != SpawnMode.LAUNCH) {
-                double d = CameraManager.pos.distance(holoPlanet.pos);
-                if (d < minBHDist) {
-                    float r = 1.0f, g = validSpawn ? 1.0f : 0.2f, b = validSpawn ? 1.0f : 0.2f;
-                    Shader.renderPlanet(fullViewMatrix, projMatrix, holoPlanet, suns, sunCount, CameraManager.pos, r, g, b, 0.6f, false, false);
-                }
-            }
-            RenderSystem.disableCull();
-        }
-
-        for (Planet p : planets) {
-            if (p.type.equals("Star")) {
-                boolean showRays = true;
-                if (CameraManager.isLocked && CameraManager.lockedTarget == p && !editRays) showRays = false;
-                if (showRays) SpaceUI.drawSunGlow(p, rotViewMatrix, projMatrix);
-            }
-        }
-        if (holoPlanet != null && holoPlanet.type.equals("Star") && currentSpawnMode != SpawnMode.LAUNCH) {
-            SpaceUI.drawSunGlow(holoPlanet, rotViewMatrix, projMatrix);
-        }
-
-        matrices.pop();
-        RenderSystem.clear(org.lwjgl.opengl.GL11.GL_DEPTH_BUFFER_BIT, false);
     }
 }

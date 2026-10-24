@@ -11,9 +11,8 @@ import spacesb.remake.SpaceEngine;
 public class MouseLobotomyMixin {
 
     @Inject(method = "onMouseScroll", at = @At("HEAD"), cancellable = true)
-    private void interceptScroll(long window, double horizontal, double vertical, CallbackInfo ci) {
-        SpaceEngine.onScroll(vertical);
-
+    private void handleCustomScroll(long window, double horizontal, double vertical, CallbackInfo ci) {
+        SpaceEngine.adjustSpeed(vertical);
         ci.cancel();
     }
 }

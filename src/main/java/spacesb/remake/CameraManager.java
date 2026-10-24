@@ -1,10 +1,8 @@
 package spacesb.remake;
 
-import net.minecraft.client.MinecraftClient;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
 import org.joml.Vector3d;
-import org.joml.Vector4f;
 import org.lwjgl.glfw.GLFW;
 
 public class CameraManager {
@@ -21,9 +19,48 @@ public class CameraManager {
 
     private static double lastTime = GLFW.glfwGetTime();
     private static double lastLeftClickTime = 0;
+    private static double lastKeyTime = GLFW.glfwGetTime();
 
     public static boolean isRotating() {
         return isRotating;
+    }
+
+    public static Matrix4f getProjectionMatrix() {
+        long window = SpaceEngine.windowHandle != 0 ? SpaceEngine.windowHandle : GLFW.glfwGetCurrentContext();
+        int[] w = new int[1], h = new int[1];
+        if (window != 0) GLFW.glfwGetFramebufferSize(window, w, h);
+        float aspect = (h[0] > 0) ? (float) w[0] / (float) h[0] : (16.0f / 9.0f);
+        return new Matrix4f().setPerspective((float) Math.toRadians(70), aspect, 0.1f, Float.POSITIVE_INFINITY);
+    }
+
+    public static Matrix4f getViewMatrix() {
+        Matrix4f view = new Matrix4f();
+        view.rotateX((float) Math.toRadians(rot.x));
+        view.rotateY((float) Math.toRadians(rot.y));
+        view.translate((float) -pos.x, (float) -pos.y, (float) -pos.z);
+        return view;
+    }
+
+    // Автоматическое отдаление камеры при выборе огромной планеты в меню Add, которая не влезает в экран
+    public static void ensureFitsOnScreen(double planetRadius) {
+        double requiredHeight = planetRadius * 3.6;
+        if (pos.y < requiredHeight) {
+            double pitch = Math.toRadians(rot.x);
+            double yaw = Math.toRadians(rot.y);
+            Vector3d forward = new Vector3d(
+                    -Math.sin(yaw) * Math.cos(pitch),
+                    -Math.sin(pitch),
+                    -Math.cos(yaw) * Math.cos(pitch)
+            ).normalize();
+            double pullBack = (requiredHeight - pos.y) / Math.max(0.25, Math.abs(forward.y));
+            pos.sub(new Vector3d(forward).mul(pullBack));
+            if (pos.y < requiredHeight) pos.y = requiredHeight;
+        }
+        // Автоматически подстраиваем минимальную скорость полёта, чтобы вокруг гиганта можно было комфортно летать
+        double minComfortableSpeed = planetRadius * 0.5;
+        if (SpaceEngine.playerFlightSpeed < minComfortableSpeed) {
+            SpaceEngine.playerFlightSpeed = Math.min(1000000.0, minComfortableSpeed);
+        }
     }
 
     public static void update(SpaceEngine.Planet currentHologram) {
@@ -31,21 +68,23 @@ public class CameraManager {
         double dt = currentTime - lastTime;
         lastTime = currentTime;
 
-        // Если спавним планету, но не залочены
-        if (currentHologram != null && !isLocked && SpaceEngine.currentSpawnMode != SpaceEngine.SpawnMode.LAUNCH) {
-            double requiredDist = currentHologram.radius * 6.0;
-            double currentDist = pos.distance(currentHologram.pos);
+        // Если активен предпросмотр спавна (голограмма) и объект не входит в монитор — плавно отодвигаем камеру
+        if (SpaceEngine.isPlacingPlanet && !isLocked && SpaceEngine.menuItems != null
+                && SpaceEngine.selectedPlanetIndex < SpaceEngine.menuItems.length
+                && SpaceEngine.currentSpawnMode != SpaceEngine.SpawnMode.LAUNCH) {
+            SpaceEngine.MenuItem item = SpaceEngine.menuItems[SpaceEngine.selectedPlanetIndex];
+            Vector3d holoPos = SpaceEngine.getHologramPos(item.radius);
+            double requiredDist = item.radius * 4.2;
+            double currentDist = pos.distance(holoPos);
 
             if (currentDist < requiredDist) {
-                Vector3d pushDir = new Vector3d(pos).sub(currentHologram.pos);
-                if (pushDir.lengthSquared() > 0.001) {
-                    pushDir.normalize();
-                } else {
-                    pushDir.set(0, 1, 0);
-                }
-                Vector3d targetPos = new Vector3d(currentHologram.pos).add(pushDir.mul(requiredDist));
+                Vector3d pushDir = new Vector3d(pos).sub(holoPos);
+                if (pushDir.lengthSquared() > 1e-6) pushDir.normalize();
+                else pushDir.set(0.0, 1.0, 0.0);
 
-                pos.set(targetPos);
+                Vector3d targetPos = new Vector3d(holoPos).fma(requiredDist, pushDir);
+                pos.lerp(targetPos, Math.min(1.0, dt * 12.0));
+                if (pos.y < item.radius * 1.5) pos.y = item.radius * 1.5;
             }
         }
 
@@ -54,19 +93,24 @@ public class CameraManager {
                 isLocked = false;
                 lockedTarget = null;
             } else {
+                double minSafeDist = lockedTarget.radius * 1.85 + 0.5;
                 if (lockedTarget != SpaceEngine.prevLockedTarget || SpaceEngine.targetOrbitDistance < 0) {
-                    SpaceEngine.lockedOrbitDistance = pos.distance(lockedTarget.pos);
+                    SpaceEngine.lockedOrbitDistance = Math.max(pos.distance(lockedTarget.pos), minSafeDist);
                     SpaceEngine.targetOrbitDistance = lockedTarget.radius * 4.0;
                     SpaceEngine.prevLockedTarget = lockedTarget;
                 }
 
-                SpaceEngine.lockedOrbitDistance += (SpaceEngine.targetOrbitDistance - SpaceEngine.lockedOrbitDistance) * 15.0 * dt;
+                if (SpaceEngine.targetOrbitDistance < minSafeDist) {
+                    SpaceEngine.targetOrbitDistance = minSafeDist;
+                }
+
+                SpaceEngine.lockedOrbitDistance += (SpaceEngine.targetOrbitDistance - SpaceEngine.lockedOrbitDistance) * Math.min(1.0, 15.0 * dt);
 
                 double pitch = Math.toRadians(rot.x);
                 double yaw = Math.toRadians(rot.y);
 
                 Vector3d forward = new Vector3d(
-                        Math.sin(yaw) * Math.cos(pitch),
+                        -Math.sin(yaw) * Math.cos(pitch),
                         -Math.sin(pitch),
                         -Math.cos(yaw) * Math.cos(pitch)
                 ).normalize();
@@ -77,6 +121,47 @@ public class CameraManager {
             SpaceEngine.prevLockedTarget = null;
             SpaceEngine.targetOrbitDistance = -1.0;
             SpaceEngine.lockedOrbitDistance = -1.0;
+        }
+
+        // Запрещаем камере пролетать сквозь любые планеты в симуляции
+        resolvePlanetCollisions();
+    }
+
+    // 3D-коллизия камеры с ориентированным кубом (OBB) и сферой безопасности каждой планеты
+    public static void resolvePlanetCollisions() {
+        for (SpaceEngine.Planet p : SpaceEngine.planets) {
+            double r = p.radius;
+            double margin = Math.max(0.35, r * 0.12);
+            double boxExtent = r + margin;
+
+            Vector3d rel = new Vector3d(pos).sub(p.pos);
+            // Быстрая проверка по ограничивающей сфере куба (sqrt(3) * boxExtent)
+            if (rel.lengthSquared() > 3.1 * boxExtent * boxExtent) continue;
+
+            double tiltRad = Math.toRadians(p.tilt);
+            double rotRad = Math.toRadians(p.currentAngle);
+
+            // Переводим позицию камеры в локальные координаты вращающейся планеты
+            Vector3d local = new Vector3d(rel).rotateZ(-tiltRad).rotateY(-rotRad);
+
+            if (Math.abs(local.x) < boxExtent && Math.abs(local.y) < boxExtent && Math.abs(local.z) < boxExtent) {
+                double dx = boxExtent - Math.abs(local.x);
+                double dy = boxExtent - Math.abs(local.y);
+                double dz = boxExtent - Math.abs(local.z);
+
+                // Выталкиваем камеру наружу по ближайшей грани куба
+                if (dx <= dy && dx <= dz) {
+                    local.x = (local.x >= 0.0) ? boxExtent : -boxExtent;
+                } else if (dy <= dx && dy <= dz) {
+                    local.y = (local.y >= 0.0) ? boxExtent : -boxExtent;
+                } else {
+                    local.z = (local.z >= 0.0) ? boxExtent : -boxExtent;
+                }
+
+                // Возвращаем вектор обратно в мировые координаты
+                local.rotateY(rotRad).rotateZ(tiltRad);
+                pos.set(p.pos).add(local);
+            }
         }
     }
 
@@ -101,11 +186,16 @@ public class CameraManager {
 
         for (SpaceEngine.Planet p : SpaceEngine.planets) {
             Vector3d oc = new Vector3d(p.pos).sub(pos);
+            double distToCenter = oc.length();
             double b = oc.dot(rayDir);
-            double c = oc.dot(oc) - p.radius * p.radius;
+            if (b <= 0) continue;
+
+            // Учитываем диагональ куба (1.45 * radius) + минимальный экранный радиус захвата курсором (1.8% от дистанции)
+            double pickRadius = Math.max(p.radius * 1.45, distToCenter * 0.018);
+            double c = oc.dot(oc) - pickRadius * pickRadius;
             double det = b * b - c;
-            if (b > 0 && det > 0) {
-                double dist = b - Math.sqrt(det);
+            if (det >= 0) {
+                double dist = Math.max(0.0, b - Math.sqrt(det));
                 if (dist < minDist) {
                     minDist = dist;
                     hit = p;
@@ -147,7 +237,7 @@ public class CameraManager {
                 firstMouse = false;
             }
 
-            rot.y += (float) (xpos[0] - lastMouseX) * 0.15f;
+            rot.y -= (float) (xpos[0] - lastMouseX) * 0.15f;
             rot.x += (float) (ypos[0] - lastMouseY) * 0.15f;
 
             if (rot.x > 89.0f) rot.x = 89.0f;
@@ -161,18 +251,23 @@ public class CameraManager {
     public static void processKeyboardInput(long window) {
         if (isLocked) return;
 
+        double currentTime = GLFW.glfwGetTime();
+        double dt = currentTime - lastKeyTime;
+        if (dt > 0.1) dt = 0.016;
+        lastKeyTime = currentTime;
+
         double pitch = Math.toRadians(rot.x);
         double yaw = Math.toRadians(rot.y);
 
         Vector3d forward = new Vector3d(
-                Math.sin(yaw) * Math.cos(pitch),
+                -Math.sin(yaw) * Math.cos(pitch),
                 -Math.sin(pitch),
                 -Math.cos(yaw) * Math.cos(pitch)
         ).normalize();
 
         Vector3d right = new Vector3d(forward).cross(new Vector3d(0, 1, 0)).normalize();
 
-        double moveSpeed = SpaceEngine.playerFlightSpeed / 10.0;
+        double moveSpeed = SpaceEngine.playerFlightSpeed * 50.0 * dt;
 
         if (GLFW.glfwGetKey(window, GLFW.GLFW_KEY_W) == GLFW.GLFW_PRESS) pos.add(new Vector3d(forward).mul(moveSpeed));
         if (GLFW.glfwGetKey(window, GLFW.GLFW_KEY_S) == GLFW.GLFW_PRESS) pos.sub(new Vector3d(forward).mul(moveSpeed));
@@ -180,28 +275,41 @@ public class CameraManager {
         if (GLFW.glfwGetKey(window, GLFW.GLFW_KEY_A) == GLFW.GLFW_PRESS) pos.sub(new Vector3d(right).mul(moveSpeed));
 
         if (pos.y < 1.0) pos.y = 1.0;
+
+        // Не даём пролететь сквозь планету при нажатии WASD
+        resolvePlanetCollisions();
     }
 
     public static Vector3f getMouseRay() {
-        MinecraftClient client = MinecraftClient.getInstance();
-        float aspect = (float) client.getWindow().getFramebufferWidth() / client.getWindow().getFramebufferHeight();
-        Matrix4f proj = new Matrix4f().setPerspective((float) Math.toRadians(70), aspect, 0.1f, 1000000f);
-        Matrix4f view = new Matrix4f().rotateX((float) Math.toRadians(rot.x)).rotateY((float) Math.toRadians(rot.y));
+        long window = SpaceEngine.windowHandle != 0 ? SpaceEngine.windowHandle : GLFW.glfwGetCurrentContext();
+        int[] w = new int[1], h = new int[1];
+        double[] mx = new double[1], my = new double[1];
+        if (window != 0) {
+            GLFW.glfwGetWindowSize(window, w, h);
+            GLFW.glfwGetCursorPos(window, mx, my);
+        }
+        if (w[0] <= 0 || h[0] <= 0) {
+            w[0] = 1920;
+            h[0] = 1080;
+        }
 
-        double mx = client.mouse.getX();
-        double my = client.mouse.getY();
-        double winW = client.getWindow().getWidth();
-        double winH = client.getWindow().getHeight();
+        float uvX = (float) ((mx[0] - 0.5 * w[0]) / h[0]);
+        float uvY = (float) ((my[0] - 0.5 * h[0]) / h[0]);
 
-        float ndcX = (float) ((mx / winW) * 2.0 - 1.0);
-        float ndcY = (float) (1.0 - (my / winH) * 2.0);
+        float pitch = (float) Math.toRadians(rot.x);
+        float yaw = (float) Math.toRadians(rot.y);
 
-        Vector4f rayClip = new Vector4f(ndcX, ndcY, -1.0f, 1.0f);
-        Vector4f rayEye = new Matrix4f(proj).invert().transform(rayClip);
-        rayEye.z = -1.0f;
-        rayEye.w = 0.0f;
+        Vector3f forward = new Vector3f(
+                (float) (-Math.sin(yaw) * Math.cos(pitch)),
+                (float) (-Math.sin(pitch)),
+                (float) (-Math.cos(yaw) * Math.cos(pitch))
+        ).normalize();
+        Vector3f right = new Vector3f(forward).cross(0.0f, 1.0f, 0.0f).normalize();
+        Vector3f up = new Vector3f(right).cross(forward).normalize();
 
-        Vector4f rayWorld = new Matrix4f(view).invert().transform(rayEye);
-        return new Vector3f(rayWorld.x, rayWorld.y, rayWorld.z).normalize();
+        return new Vector3f(forward)
+                .add(new Vector3f(right).mul(uvX))
+                .sub(new Vector3f(up).mul(uvY))
+                .normalize();
     }
 }

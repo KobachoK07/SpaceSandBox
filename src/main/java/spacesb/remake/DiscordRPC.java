@@ -15,6 +15,7 @@ public class DiscordRPC {
             try {
                 pipe = new RandomAccessFile("\\\\.\\pipe\\discord-ipc-0", "rw");
 
+                // ВАЖНО: Не забудь Client ID!
                 String clientId = "1535259172675780818";
                 String handshake = "{\"v\": 1, \"client_id\": \"" + clientId + "\"}";
                 send(0, handshake);
@@ -26,7 +27,7 @@ public class DiscordRPC {
                         "\"args\": {" +
                         "\"pid\": " + ProcessHandle.current().pid() + "," +
                         "\"activity\": {" +
-                        "\"details\": \"В симуляции\"," + // Только эта надпись
+                        "\"details\": \"В симуляции\"," +
                         "\"timestamps\": {" +
                         "\"start\": " + START_TIME + // Таймер
                         "}," +
