@@ -7,10 +7,10 @@ public class SagittariusA extends BasePlanet {
     @Override public String getType() { return "Hole"; }
     @Override public String getGuiTex() { return "assets/spacesb-remake/textures/gui/blackholegui.png"; }
     @Override public String getPlanetTex() { return "assets/spacesb-remake/textures/planet/sa.png"; }
-    @Override public double getRadius() { return 10238.0f; }
+    @Override public double getRadius() { return 10066.8; }
     @Override public double getMass() { return 1.43e12; }
-    @Override public float getTilt() { return 0f; }
-    @Override public double getRotationPeriod() { return 0; }
-    @Override public double getTemperature() { return 0; }
+    @Override public float getTilt() { return 0.0f; }
+    @Override public double getRotationPeriod() { return 0.0; }
+    @Override public double getTemperature() { return -273.15; }
     @Override public float[][] getUvMap() { return UV_MAP; }
 }

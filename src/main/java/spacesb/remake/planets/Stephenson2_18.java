@@ -7,10 +7,10 @@ public class Stephenson2_18 extends BasePlanet {
     @Override public String getType() { return "Star"; }
     @Override public String getGuiTex() { return "assets/spacesb-remake/textures/gui/stephenson2_18gui.png"; }
     @Override public String getPlanetTex() { return "assets/spacesb-remake/textures/planet/stephenson2_18.png"; }
-    @Override public double getRadius() { return 1188200.0f; }
+    @Override public double getRadius() { return 1188200.0; }
     @Override public double getMass() { return 4995000.0; }
-    @Override public float getTilt() { return 0f; }
+    @Override public float getTilt() { return 0.0f; }
     @Override public double getRotationPeriod() { return 999999999.0; }
-    @Override public double getTemperature() { return 3200.0; }
+    @Override public double getTemperature() { return 2927.0; }
     @Override public float[][] getUvMap() { return UV_MAP; }
 }

@@ -7,7 +7,7 @@ public class Venus extends BasePlanet {
     @Override public String getType() { return "Planet"; }
     @Override public String getGuiTex() { return "assets/spacesb-remake/textures/gui/venusgui.png"; }
     @Override public String getPlanetTex() { return "assets/spacesb-remake/textures/planet/venus.png"; }
-    @Override public double getRadius() { return 4.803f; }
+    @Override public double getRadius() { return 4.803; }
     @Override public double getMass() { return 0.815; }
     @Override public float getTilt() { return 177.36f; }
     @Override public double getRotationPeriod() { return 5832.5; }

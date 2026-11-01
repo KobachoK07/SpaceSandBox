@@ -7,10 +7,10 @@ public class Ton618 extends BasePlanet {
     @Override public String getType() { return "Hole"; }
     @Override public String getGuiTex() { return "assets/spacesb-remake/textures/gui/blackholegui.png"; }
     @Override public String getPlanetTex() { return "assets/spacesb-remake/textures/planet/sa.png"; }
-    @Override public double getRadius() { return 154347000.0f; }
+    @Override public double getRadius() { return 154719120.0; }
     @Override public double getMass() { return 2.1978e16; }
-    @Override public float getTilt() { return 0f; }
-    @Override public double getRotationPeriod() { return 0; }
-    @Override public double getTemperature() { return 0; }
+    @Override public float getTilt() { return 0.0f; }
+    @Override public double getRotationPeriod() { return 0.0; }
+    @Override public double getTemperature() { return -273.15; }
     @Override public float[][] getUvMap() { return UV_MAP; }
 }

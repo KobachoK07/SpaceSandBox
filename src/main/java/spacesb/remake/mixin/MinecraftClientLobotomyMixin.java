@@ -21,16 +21,13 @@ public class MinecraftClientLobotomyMixin {
         MinecraftClient client = MinecraftClient.getInstance();
         if (client.getWindow() != null) {
             long window = client.getWindow().getHandle();
-
+            SpaceEngine.windowHandle = window;
             SpaceEngine.renderFrame();
-
-            GLFW.glfwPollEvents();
 
             if (GLFW.glfwWindowShouldClose(window)) {
                 client.scheduleStop();
             }
         }
-
         ci.cancel();
     }
 }

@@ -3,6 +3,7 @@ package spacesb.remake.render;
 import org.lwjgl.glfw.GLFWNativeWin32;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.vulkan.*;
+import spacesb.remake.SpaceEngine;
 
 import java.nio.IntBuffer;
 import java.nio.LongBuffer;
@@ -25,8 +26,10 @@ public class SBoxVulkanSwapchain {
         VkDevice device = SBoxVulkanCore.logicalDevice;
         if (device == null) return;
 
-        for (long view : swapchainImageViews) {
-            if (view != VK_NULL_HANDLE) vkDestroyImageView(device, view, null);
+        if (swapchainImageViews != null) {
+            for (long view : swapchainImageViews) {
+                if (view != VK_NULL_HANDLE) vkDestroyImageView(device, view, null);
+            }
         }
         if (swapchain != VK_NULL_HANDLE) {
             vkDestroySwapchainKHR(device, swapchain, null);
@@ -46,10 +49,7 @@ public class SBoxVulkanSwapchain {
 
             long hwnd = GLFWNativeWin32.glfwGetWin32Window(windowHandle);
             long hinstance = org.lwjgl.system.windows.User32.GetWindowLongPtr(hwnd, -6);
-
-            if (hinstance == 0L) {
-                hinstance = 1L;
-            }
+            if (hinstance == 0L) hinstance = 1L;
 
             VkWin32SurfaceCreateInfoKHR surfaceInfo = VkWin32SurfaceCreateInfoKHR.calloc(stack)
                     .sType(KHRWin32Surface.VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR)
@@ -65,9 +65,30 @@ public class SBoxVulkanSwapchain {
             VkSurfaceCapabilitiesKHR capabilities = VkSurfaceCapabilitiesKHR.calloc(stack);
             vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, surface, capabilities);
 
-            int minImageCount = capabilities.minImageCount() + 1;
+            int minImageCount = SpaceEngine.vsyncEnabled ? Math.max(2, capabilities.minImageCount()) : (capabilities.minImageCount() + 1);
             if (capabilities.maxImageCount() > 0 && minImageCount > capabilities.maxImageCount()) {
                 minImageCount = capabilities.maxImageCount();
+            }
+
+            int chosenPresentMode = VK_PRESENT_MODE_FIFO_KHR;
+            if (!SpaceEngine.vsyncEnabled) {
+                IntBuffer pModeCount = stack.mallocInt(1);
+                vkGetPhysicalDeviceSurfacePresentModesKHR(physicalDevice, surface, pModeCount, null);
+                int modeCount = pModeCount.get(0);
+                if (modeCount > 0) {
+                    IntBuffer modes = stack.mallocInt(modeCount);
+                    vkGetPhysicalDeviceSurfacePresentModesKHR(physicalDevice, surface, pModeCount, modes);
+                    for (int i = 0; i < modeCount; i++) {
+                        int m = modes.get(i);
+                        if (m == VK_PRESENT_MODE_IMMEDIATE_KHR) {
+                            chosenPresentMode = VK_PRESENT_MODE_IMMEDIATE_KHR;
+                            break;
+                        }
+                        if (m == VK_PRESENT_MODE_MAILBOX_KHR) {
+                            chosenPresentMode = VK_PRESENT_MODE_MAILBOX_KHR;
+                        }
+                    }
+                }
             }
 
             VkSwapchainCreateInfoKHR createInfo = VkSwapchainCreateInfoKHR.calloc(stack)
@@ -81,13 +102,16 @@ public class SBoxVulkanSwapchain {
                     .imageUsage(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT)
                     .preTransform(capabilities.currentTransform())
                     .compositeAlpha(VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR)
-                    .presentMode(VK_PRESENT_MODE_FIFO_KHR)
+                    .presentMode(chosenPresentMode)
                     .clipped(true)
                     .oldSwapchain(VK_NULL_HANDLE);
 
             LongBuffer pSwapchain = stack.mallocLong(1);
             if (vkCreateSwapchainKHR(device, createInfo, null, pSwapchain) != VK_SUCCESS) {
-                throw new RuntimeException("Не удалось создать Swapchain!");
+                createInfo.presentMode(VK_PRESENT_MODE_FIFO_KHR);
+                if (vkCreateSwapchainKHR(device, createInfo, null, pSwapchain) != VK_SUCCESS) {
+                    throw new RuntimeException("Не удалось создать Swapchain!");
+                }
             }
             swapchain = pSwapchain.get(0);
 

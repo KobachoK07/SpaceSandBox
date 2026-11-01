@@ -7,10 +7,10 @@ public class M60UDS1 extends BasePlanet {
     @Override public String getType() { return "Hole"; }
     @Override public String getGuiTex() { return "assets/spacesb-remake/textures/gui/blackholegui.png"; }
     @Override public String getPlanetTex() { return "assets/spacesb-remake/textures/planet/sa.png"; }
-    @Override public double getRadius() { return 50000.0f; }
+    @Override public double getRadius() { return 49207.7; }
     @Override public double getMass() { return 6.99e12; }
-    @Override public float getTilt() { return 0f; }
-    @Override public double getRotationPeriod() { return 0; }
-    @Override public double getTemperature() { return 0; }
+    @Override public float getTilt() { return 0.0f; }
+    @Override public double getRotationPeriod() { return 0.0; }
+    @Override public double getTemperature() { return -273.15; }
     @Override public float[][] getUvMap() { return UV_MAP; }
 }

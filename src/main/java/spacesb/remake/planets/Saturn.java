@@ -7,10 +7,10 @@ public class Saturn extends BasePlanet {
     @Override public String getType() { return "Planet"; }
     @Override public String getGuiTex() { return "assets/spacesb-remake/textures/gui/saturngui.png"; }
     @Override public String getPlanetTex() { return "assets/spacesb-remake/textures/planet/saturn.png"; }
-    @Override public double getRadius() { return 46.215f; }
-    @Override public double getMass() { return 95.15; }
+    @Override public double getRadius() { return 46.2159; }
+    @Override public double getMass() { return 95.159; }
     @Override public float getTilt() { return 26.73f; }
-    @Override public double getRotationPeriod() { return 10.66; }
+    @Override public double getRotationPeriod() { return 10.55; }
     @Override public double getTemperature() { return -140.0; }
     @Override public float[][] getUvMap() { return UV_MAP; }
 }

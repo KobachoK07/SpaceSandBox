@@ -7,8 +7,8 @@ public class Uranus extends BasePlanet {
     @Override public String getType() { return "Planet"; }
     @Override public String getGuiTex() { return "assets/spacesb-remake/textures/gui/uranusgui.png"; }
     @Override public String getPlanetTex() { return "assets/spacesb-remake/textures/planet/uranus.png"; }
-    @Override public double getRadius() { return 20.128f; }
-    @Override public double getMass() { return 14.53; }
+    @Override public double getRadius() { return 20.1286; }
+    @Override public double getMass() { return 14.536; }
     @Override public float getTilt() { return 97.77f; }
     @Override public double getRotationPeriod() { return 17.24; }
     @Override public double getTemperature() { return -195.0; }

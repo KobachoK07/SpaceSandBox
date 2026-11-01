@@ -41,7 +41,6 @@ public class SBoxVulkanCanvas {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkDevice device = SBoxVulkanCore.logicalDevice;
 
-            // Чистое создание картинки. Без VK_EXTERNAL_MEMORY!
             VkImageCreateInfo imageInfo = VkImageCreateInfo.calloc(stack)
                     .sType(VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO)
                     .imageType(VK_IMAGE_TYPE_2D)
@@ -50,7 +49,6 @@ public class SBoxVulkanCanvas {
                     .format(VK_FORMAT_R8G8B8A8_UNORM)
                     .tiling(VK_IMAGE_TILING_OPTIMAL)
                     .initialLayout(VK_IMAGE_LAYOUT_UNDEFINED)
-                    // ДОБАВЛЕН TRANSFER_SRC_BIT для копирования на экран
                     .usage(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT)
                     .samples(VK_SAMPLE_COUNT_1_BIT)
                     .sharingMode(VK_SHARING_MODE_EXCLUSIVE);
@@ -65,7 +63,7 @@ public class SBoxVulkanCanvas {
 
             VkPhysicalDeviceMemoryProperties memProps = VkPhysicalDeviceMemoryProperties.calloc(stack);
             vkGetPhysicalDeviceMemoryProperties(SBoxVulkanCore.physicalDevice, memProps);
-            int memType = -1;
+            int memType = 0;
             for (int i = 0; i < memProps.memoryTypeCount(); i++) {
                 if ((memReqs.memoryTypeBits() & (1 << i)) != 0 && (memProps.memoryTypes(i).propertyFlags() & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) != 0) {
                     memType = i;

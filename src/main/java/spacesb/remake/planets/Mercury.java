@@ -7,7 +7,7 @@ public class Mercury extends BasePlanet {
     @Override public String getType() { return "Planet"; }
     @Override public String getGuiTex() { return "assets/spacesb-remake/textures/gui/mercurygui.png"; }
     @Override public String getPlanetTex() { return "assets/spacesb-remake/textures/planet/mercury.png"; }
-    @Override public double getRadius() { return 1.936f; }
+    @Override public double getRadius() { return 1.93627; }
     @Override public double getMass() { return 0.0553; }
     @Override public float getTilt() { return 0.03f; }
     @Override public double getRotationPeriod() { return 1407.6; }

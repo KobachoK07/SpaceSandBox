@@ -7,10 +7,10 @@ public class Jupiter extends BasePlanet {
     @Override public String getType() { return "Planet"; }
     @Override public String getGuiTex() { return "assets/spacesb-remake/textures/gui/jupitergui.png"; }
     @Override public String getPlanetTex() { return "assets/spacesb-remake/textures/planet/jupiter.png"; }
-    @Override public double getRadius() { return 56.739f; }
-    @Override public double getMass() { return 317.8; }
+    @Override public double getRadius() { return 55.4849; }
+    @Override public double getMass() { return 317.83; }
     @Override public float getTilt() { return 3.13f; }
-    @Override public double getRotationPeriod() { return 9.93; }
+    @Override public double getRotationPeriod() { return 9.925; }
     @Override public double getTemperature() { return -110.0; }
     @Override public float[][] getUvMap() { return UV_MAP; }
 }

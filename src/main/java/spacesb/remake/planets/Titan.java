@@ -7,11 +7,11 @@ public class Titan extends BasePlanet {
     @Override public String getType() { return "Satellite"; }
     @Override public String getGuiTex() { return "assets/spacesb-remake/textures/gui/titangui.png"; }
     @Override public String getPlanetTex() { return "assets/spacesb-remake/textures/planet/titan.png"; }
-    @Override public double getRadius() { return 2.043f; }
+    @Override public double getRadius() { return 2.0434; }
     @Override public double getMass() { return 0.0225; }
-    @Override public float getTilt() { return 0.0f; }
-    @Override public double getRotationPeriod() { return 382.69; }
-    @Override public double getTemperature() { return -179.0; }
+    @Override public float getTilt() { return 0.3f; }
+    @Override public double getRotationPeriod() { return 382.68; }
+    @Override public double getTemperature() { return -179.5; }
     @Override public float[][] getUvMap() { return UV_MAP; }
     @Override public boolean isRigid() { return true; }
 }
