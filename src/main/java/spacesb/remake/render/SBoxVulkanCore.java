@@ -25,6 +25,7 @@ public class SBoxVulkanCore {
     public static VkCommandBuffer copyCommandBuffer;
 
     public static boolean supportsFp64 = false;
+    public static VkPhysicalDeviceMemoryProperties cachedMemoryProperties;
 
     public static void init() {
         if (instance != null) return;
@@ -54,9 +55,31 @@ public class SBoxVulkanCore {
             instance = new VkInstance(pInstance.get(0), createInfo);
 
             pickPhysicalDevice(stack);
+            cachedMemoryProperties = VkPhysicalDeviceMemoryProperties.calloc();
+            vkGetPhysicalDeviceMemoryProperties(physicalDevice, cachedMemoryProperties);
+
             createLogicalDevice(stack);
             createCommandPool(stack);
         }
+    }
+
+    public static int findMemoryType(int typeBits, int preferredProps, int fallbackProps) {
+        int count = cachedMemoryProperties.memoryTypeCount();
+        for (int i = 0; i < count; i++) {
+            if ((typeBits & (1 << i)) != 0 && (cachedMemoryProperties.memoryTypes(i).propertyFlags() & preferredProps) == preferredProps) {
+                return i;
+            }
+        }
+        for (int i = 0; i < count; i++) {
+            if ((typeBits & (1 << i)) != 0 && (cachedMemoryProperties.memoryTypes(i).propertyFlags() & fallbackProps) == fallbackProps) {
+                return i;
+            }
+        }
+        throw new RuntimeException("Не найден подходящий тип памяти Vulkan!");
+    }
+
+    public static int findMemoryType(int typeBits, int properties) {
+        return findMemoryType(typeBits, properties, properties);
     }
 
     private static void pickPhysicalDevice(MemoryStack stack) {
@@ -92,7 +115,6 @@ public class SBoxVulkanCore {
             }
         }
 
-        // Проверяем поддержку 64-битной математики (double / dvec3 / dvec4) на GPU
         VkPhysicalDeviceFeatures supported = VkPhysicalDeviceFeatures.calloc(stack);
         vkGetPhysicalDeviceFeatures(physicalDevice, supported);
         supportsFp64 = supported.shaderFloat64();

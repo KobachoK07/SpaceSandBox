@@ -654,16 +654,7 @@ public class SBoxVulkanUI {
     }
 
     private static int getMemoryType(int typeBits, int properties) {
-        VkPhysicalDeviceMemoryProperties memProps = VkPhysicalDeviceMemoryProperties.calloc();
-        vkGetPhysicalDeviceMemoryProperties(SBoxVulkanCore.physicalDevice, memProps);
-        for (int i = 0; i < memProps.memoryTypeCount(); i++) {
-            if ((typeBits & (1 << i)) != 0 && (memProps.memoryTypes(i).propertyFlags() & properties) == properties) {
-                memProps.free();
-                return i;
-            }
-        }
-        memProps.free();
-        throw new RuntimeException("Требуемый тип памяти не найден");
+        return SBoxVulkanCore.findMemoryType(typeBits, properties);
     }
 
     private static VkCommandBuffer beginSingleTimeCommands(MemoryStack stack) {
@@ -704,7 +695,11 @@ public class SBoxVulkanUI {
 
     private static long compileShader(String glslCode, int shaderType, String name) {
         long compiler = Shaderc.shaderc_compiler_initialize();
-        long result = Shaderc.shaderc_compile_into_spv(compiler, glslCode, shaderType, name, "main", 0);
+        long options = Shaderc.shaderc_compile_options_initialize();
+        Shaderc.shaderc_compile_options_set_optimization_level(options, Shaderc.shaderc_optimization_level_performance);
+        Shaderc.shaderc_compile_options_set_target_env(options, Shaderc.shaderc_target_env_vulkan, Shaderc.shaderc_env_version_vulkan_1_3);
+
+        long result = Shaderc.shaderc_compile_into_spv(compiler, glslCode, shaderType, name, "main", options);
         if (Shaderc.shaderc_result_get_compilation_status(result) != Shaderc.shaderc_compilation_status_success) {
             throw new RuntimeException("ОШИБКА UI ШЕЙДЕРА:\n" + Shaderc.shaderc_result_get_error_message(result));
         }
@@ -716,6 +711,7 @@ public class SBoxVulkanUI {
             LongBuffer pModule = stack.mallocLong(1);
             vkCreateShaderModule(SBoxVulkanCore.logicalDevice, createInfo, null, pModule);
             Shaderc.shaderc_result_release(result);
+            Shaderc.shaderc_compile_options_release(options);
             Shaderc.shaderc_compiler_release(compiler);
             return pModule.get(0);
         }

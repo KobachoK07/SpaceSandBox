@@ -61,15 +61,7 @@ public class SBoxVulkanCanvas {
             vkGetImageMemoryRequirements(device, canvasImage, memReqs);
             canvasMemorySize = memReqs.size();
 
-            VkPhysicalDeviceMemoryProperties memProps = VkPhysicalDeviceMemoryProperties.calloc(stack);
-            vkGetPhysicalDeviceMemoryProperties(SBoxVulkanCore.physicalDevice, memProps);
-            int memType = 0;
-            for (int i = 0; i < memProps.memoryTypeCount(); i++) {
-                if ((memReqs.memoryTypeBits() & (1 << i)) != 0 && (memProps.memoryTypes(i).propertyFlags() & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) != 0) {
-                    memType = i;
-                    break;
-                }
-            }
+            int memType = SBoxVulkanCore.findMemoryType(memReqs.memoryTypeBits(), VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
             VkMemoryAllocateInfo allocInfo = VkMemoryAllocateInfo.calloc(stack)
                     .sType(VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO)

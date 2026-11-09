@@ -83,7 +83,7 @@ public class PhysicsEngine {
     }
 
     public static void fillCraterRenderData(SpaceEngine.Planet p, float[] out100) {
-        for (int i = 0; i < 100; i++) out100[i] = 0.0f;
+        Arrays.fill(out100, 0.0f);
         CraterState cs = (p != null) ? CRATER_MAP.get(p) : null;
         if (cs == null) return;
         int activeCount = 0;
@@ -104,10 +104,45 @@ public class PhysicsEngine {
         out100[98] = (float) activeCount;
     }
 
+    private static void compactFragments(List<SpaceEngine.Fragment> list) {
+        int writeIdx = 0, sz = list.size();
+        for (int readIdx = 0; readIdx < sz; readIdx++) {
+            SpaceEngine.Fragment f = list.get(readIdx);
+            if (f != null && f.life > 0.0) {
+                if (writeIdx != readIdx) list.set(writeIdx, f);
+                writeIdx++;
+            }
+        }
+        if (writeIdx < sz) list.subList(writeIdx, sz).clear();
+    }
+
+    private static void compactParticles(List<SpaceEngine.Particle> list) {
+        int writeIdx = 0, sz = list.size();
+        for (int readIdx = 0; readIdx < sz; readIdx++) {
+            SpaceEngine.Particle pt = list.get(readIdx);
+            if (pt != null && pt.life > 0.0) {
+                if (writeIdx != readIdx) list.set(writeIdx, pt);
+                writeIdx++;
+            }
+        }
+        if (writeIdx < sz) list.subList(writeIdx, sz).clear();
+    }
+
     public static void ensureSaturnRings(List<SpaceEngine.Planet> planets) {
         if (planets == null) return;
+        if (!SpaceEngine.enableSaturnRings) {
+            if (!SATURN_RINGS_SPAWNED.isEmpty()) {
+                SATURN_RINGS_SPAWNED.clear();
+                for (int i = 0, sz = SpaceEngine.fragments.size(); i < sz; i++) {
+                    SpaceEngine.Fragment f = SpaceEngine.fragments.get(i);
+                    if (f != null && f.isSaturnRing) f.life = -1.0;
+                }
+                compactFragments(SpaceEngine.fragments);
+            }
+            return;
+        }
         SATURN_RINGS_SPAWNED.retainAll(planets);
-        for (int i = 0; i < planets.size(); i++) {
+        for (int i = 0, sz = planets.size(); i < sz; i++) {
             SpaceEngine.Planet p = planets.get(i);
             if (p == null || p.mass <= 0.0) continue;
             boolean isSaturn = "Saturn".equalsIgnoreCase(p.name) || (p.texture != null && p.texture.toLowerCase().contains("saturn"));
@@ -160,6 +195,7 @@ public class PhysicsEngine {
 
             f.set(SCRATCH_POS, SCRATCH_VEL, sizeJitter, 999990.0, pieceMass, -185.0,
                     SpaceEngine.TEX_FRAGMENT, px / 16.0f, py / 16.0f, (px + 1.0f) / 16.0f, (py + 1.0f) / 16.0f);
+            f.isSaturnRing = true;
             if (!alreadyActive) SpaceEngine.fragments.add(f);
         }
     }
@@ -226,7 +262,7 @@ public class PhysicsEngine {
     }
 
     private static void stepCratersThermodynamics(List<SpaceEngine.Planet> planets, double dtSim, double dtReal) {
-        for (int i = 0; i < planets.size(); i++) {
+        for (int i = 0, sz = planets.size(); i < sz; i++) {
             SpaceEngine.Planet p = planets.get(i);
             CraterState cs = CRATER_MAP.get(p);
             if (cs == null) continue;
@@ -267,385 +303,581 @@ public class PhysicsEngine {
     public static float toLocalCoord(double relCoord, int sector) { return (float) (relCoord - (double) sector * SECTOR_SIZE); }
     public static double fromSectorAndLocal(int sector, float local) { return (double) sector * SECTOR_SIZE + (double) local; }
 
+    private static String buildPhysicsGlslPart1() {
+        return "#version 450\n" +
+                "#extension GL_ARB_gpu_shader_fp64 : enable\n" +
+                "layout (local_size_x = 64) in;\n" +
+                "struct GpuPlanet { dvec4 posAndMass; dvec4 velAndRadius; dvec4 rotAndTemp; dvec4 stateAndShed; };\n" +
+                "struct GpuDebris { ivec4 sectorAndType; vec4 localPosAndSize; vec4 velAndStatus; vec4 massTempAngle; };\n" +
+                "layout (std430, binding = 0) buffer PlanetPhysicsBuffer { GpuPlanet planets[64]; } pb;\n" +
+                "layout (std430, binding = 1) buffer DebrisPhysicsBuffer { GpuDebris debris[65536]; } db;\n" +
+                "layout (push_constant) uniform PushConstants { double subDt; double dtReal; int planetCount; int debrisCount; int subSteps; int flags; } pc;\n" +
+                "const double G_D = 0.00019926275949971405LF, MAX_C_D = 237.93052222222222LF, MAX_C_SQ_D = 56610.93340559396LF, TWO_G_OVER_C2_D = 7.039726890892425e-9LF;\n" +
+                "const float G_F = 0.00019926276, MAX_C_F = 237.93052, MAX_C_SQ_F = 56610.934, TWO_G_OVER_C2_F = 7.039727e-9;\n" +
+                "const float PI_F = 3.14159265, DEG_TO_RAD_F = 0.0174532925, SECTOR_SIZE_F = 2.0, INV_SECTOR_SIZE_F = 0.5;\n" +
+                "shared dvec4 sPlanetPosMassD[64], sPlanetVelRadD[64];\n" +
+                "shared ivec4 sSector[64], sDebSec[64];\n" +
+                "shared vec4 sLocalMass[64], sVelRad[64], sTempType[64], sRadiosityPass1[64], sDebLocSize[64], sDebVelMass[64];\n" +
+                "void worldDoubleToSector(dvec3 wPos, out ivec3 sec, out vec3 loc) {\n" +
+                "dvec3 secD = floor(wPos * 0.5LF + dvec3(0.5LF)); sec = ivec3(secD); loc = vec3(wPos - secD * 2.0LF);\n" +
+                "}\n" +
+                "void normalizeSectorPos(inout ivec3 sec, inout vec3 loc) {\n" +
+                "ivec3 shift = ivec3(floor(loc * INV_SECTOR_SIZE_F + vec3(0.5))); sec += shift; loc -= vec3(shift) * SECTOR_SIZE_F;\n" +
+                "}\n" +
+                "vec3 sectorDelta(ivec3 secJ, vec3 locJ, ivec3 secI, vec3 locI) {\n" +
+                "return vec3(secJ - secI) * SECTOR_SIZE_F + (locJ - locI);\n" +
+                "}\n" +
+                "float cbrtFast(float v) {\n" +
+                "if (isnan(v) || isinf(v) || !(v > 1e-12)) return 0.01;\n" +
+                "float r = pow(v, 0.33333334); r = (2.0 * r + v / max(r * r, 1e-18)) * 0.33333334; return max(r, 0.01);\n" +
+                "}\n" +
+                "float cubeSupportRadius(vec3 unitDir, float halfExt, float tiltRad, float rotRad) {\n" +
+                "float ct = cos(-tiltRad), st = sin(-tiltRad), cr = cos(-rotRad), sr = sin(-rotRad);\n" +
+                "vec3 uz = vec3(ct * unitDir.x - st * unitDir.y, st * unitDir.x + ct * unitDir.y, unitDir.z);\n" +
+                "vec3 ul = abs(vec3(cr * uz.x + sr * uz.z, uz.y, -sr * uz.x + cr * uz.z));\n" +
+                "return halfExt / max(max(ul.x, ul.y), max(ul.z, 0.57735026));\n" +
+                "}\n" +
+                "float calcSnowCoverage(float tempC, float rad, float mass, float rotPeriod, float bondAlbedo, bool isRigid) {\n" +
+                "if (!isRigid || tempC > 30.0 || bondAlbedo < 0.18) return 0.0;\n" +
+                "float safeRot = max(0.0001, abs(rotPeriod));\n" +
+                "float wCurr = (2.0 * PI_F) / (safeRot * 3600.0), wCrit = sqrt((G_F * max(mass, 1e-6)) / max(rad * rad * rad, 1e-6));\n" +
+                "float centrifRatio = clamp(wCurr / max(wCrit, 1e-6), 0.0, 1.5);\n" +
+                "float freezeSpan = (bondAlbedo >= 0.24 && bondAlbedo <= 0.27) ? 95.0 : 68.0;\n" +
+                "float freezeTop = (bondAlbedo >= 0.24 && bondAlbedo <= 0.27) ? -10.0 : 22.0;\n" +
+                "float baseSnow = clamp((freezeTop - tempC) / freezeSpan, 0.0, 1.0);\n" +
+                "return clamp(baseSnow * (1.0 - centrifRatio * 0.35), 0.0, 1.0);\n" +
+                "}\n" +
+                "float stepStefanBoltzmann(float currTempC, float incomingRadT4, float areaToMassRatio, float greenhouseTau, float dt) {\n" +
+                "float eqTempK = sqrt(sqrt(max(incomingRadT4 * (1.0 + greenhouseTau), 53.1441))), currTempK = clamp(currTempC + 273.15, 2.7, 40000.0);\n" +
+                "float tNorm = currTempK * 0.001, eqNorm = eqTempK * 0.001;\n" +
+                "float t4 = (tNorm * tNorm) * (tNorm * tNorm), eq4 = (eqNorm * eqNorm) * (eqNorm * eqNorm);\n" +
+                "float phaseBuffer = (abs(currTempC) < 12.0 || abs(currTempC - 100.0) < 18.0) ? 0.45 : 1.0;\n" +
+                "float dT = (eq4 - t4) * 38.0 * areaToMassRatio * phaseBuffer * abs(dt);\n" +
+                "currTempK = (eqTempK > currTempK) ? min(eqTempK, currTempK + max(0.0, dT)) : max(eqTempK, currTempK + min(0.0, dT));\n" +
+                "return currTempK - 273.15;\n" +
+                "}\n";
+    }
+
+    private static String buildPhysicsGlslPart2() {
+        return "vec3 calcAccelerationFloat32(int ignoreIdx, vec3 posIF, vec3 velIF, float radIF, float massIF, int n, bool gravOn, bool realisticPhys) {\n" +
+                "if (!gravOn) return vec3(0.0);\n" +
+                "vec3 accF = vec3(0.0);\n" +
+                "for (int j = 0; j < n; j++) {\n" +
+                "if (j == ignoreIdx) continue;\n" +
+                "vec4 lmJ = sLocalMass[j]; float massJ = lmJ.w;\n" +
+                "if (!(massJ > 0.0)) continue;\n" +
+                "vec3 d = lmJ.xyz - posIF;\n" +
+                "float distSq = max(dot(d, d), 1e-8), invDist = inversesqrt(distSq), dist = distSq * invDist;\n" +
+                "float rJ = max(sVelRad[j].w, 0.01), sumRad = max(radIF, 0.01) + rJ, effDist = max(dist, max(sumRad * 0.65, 0.08)), invEff = 1.0 / effDist;\n" +
+                "vec3 dir = d * invDist; float relFactor = 1.0;\n" +
+                "if (realisticPhys) {\n" +
+                "vec3 vRel = velIF - sVelRad[j].xyz, vTang = fma(dir, vec3(-dot(vRel, dir)), vRel);\n" +
+                "float rsJ = TWO_G_OVER_C2_F * (massIF + massJ);\n" +
+                "float pwFactor = 1.0 / max(1.0 - clamp(rsJ * invEff, 0.0, 0.42), 0.58);\n" +
+                "relFactor = pwFactor + clamp(3.0 * dot(vTang, vTang) / MAX_C_SQ_F, 0.0, 0.28);\n" +
+                "}\n" +
+                "float baseG = (G_F * massJ * (invEff * invEff)) * relFactor;\n" +
+                "accF = fma(dir, vec3(baseG), accF);\n" +
+                "float packedJ = sTempType[j].z;\n" +
+                "if (realisticPhys && packedJ < 500.0 && sTempType[j].y < 0.5 && dist < rJ * 6.0) {\n" +
+                "float tiltRadJ = packedJ * DEG_TO_RAD_F;\n" +
+                "vec3 spinAxis = vec3(-sin(tiltRadJ), cos(tiltRadJ), 0.0);\n" +
+                "float sinLat = dot(-dir, spinAxis), rRatio2 = (rJ * rJ) * (invEff * invEff);\n" +
+                "accF += (dir * (1.0 - 5.0 * sinLat * sinLat) + spinAxis * (2.0 * sinLat)) * (baseG * 0.016 * rRatio2);\n" +
+                "}\n" +
+                "}\n" +
+                "return accF;\n" +
+                "}\n" +
+                "dvec3 calcAccelerationHybrid(int ignoreIdx, dvec3 posI, dvec3 velI, double radI, double massI, int n, bool gravOn, bool force64, bool realisticPhys) {\n" +
+                "if (!gravOn) return dvec3(0.0LF);\n" +
+                "dvec3 accD = dvec3(0.0LF); vec3 accF = vec3(0.0);\n" +
+                "vec3 posIF = vec3(posI), velIF = vec3(velI); float radIF = float(radI), massIF = float(massI);\n" +
+                "for (int j = 0; j < n; j++) {\n" +
+                "if (j == ignoreIdx) continue;\n" +
+                "dvec4 pmJ = sPlanetPosMassD[j]; double massJ = pmJ.w;\n" +
+                "if (!(massJ > 0.0LF)) continue;\n" +
+                "dvec4 vrJ = sPlanetVelRadD[j];\n" +
+                "bool use64 = force64;\n" +
+                "if (!use64) {\n" +
+                "vec3 approxD = vec3(pmJ.xyz) - posIF; float approxDistSq = dot(approxD, approxD);\n" +
+                "float sumR = radIF + float(vrJ.w);\n" +
+                "use64 = (approxDistSq > 160000.0) || (dot(vec3(pmJ.xyz), vec3(pmJ.xyz)) > 67108864.0) || (approxDistSq < sumR * sumR * 9.0);\n" +
+                "}\n" +
+                "if (use64) {\n" +
+                "dvec3 d = pmJ.xyz - posI;\n" +
+                "double distSq = max(dot(d, d), 1e-12LF), invDist = inversesqrt(distSq), dist = distSq * invDist;\n" +
+                "double sumRad = max(radI, 0.01LF) + max(vrJ.w, 0.01LF), effDist = max(dist, max(sumRad * 0.65LF, 0.08LF)), invEff = 1.0LF / effDist;\n" +
+                "dvec3 dir = d * invDist; double relFactor = 1.0LF;\n" +
+                "if (realisticPhys) {\n" +
+                "dvec3 vRel = velI - vrJ.xyz, vTang = vRel - dir * dot(vRel, dir);\n" +
+                "double rsJ = TWO_G_OVER_C2_D * (massI + massJ);\n" +
+                "double pwFactor = 1.0LF / max(1.0LF - clamp(rsJ * invEff, 0.0LF, 0.42LF), 0.58LF);\n" +
+                "relFactor = pwFactor + clamp(3.0LF * dot(vTang, vTang) / MAX_C_SQ_D, 0.0LF, 0.28LF);\n" +
+                "if (sTempType[j].y > 1.5 && dist < vrJ.w * 24.0LF) {\n" +
+                "vec3 vRelF = vec3(vRel), spinBHF = vec3(0.0, 1.0, 0.0);\n" +
+                "vec3 ltAcc = cross(vRelF, spinBHF) * float(G_D * massJ * (invEff * invEff * invEff) * 0.08LF * vrJ.w / MAX_C_D);\n" +
+                "accF += ltAcc;\n" +
+                "}\n" +
+                "}\n" +
+                "double baseG = (G_D * massJ * (invEff * invEff)) * relFactor;\n" +
+                "accD += dir * baseG;\n" +
+                "float packedJ = sTempType[j].z;\n" +
+                "if (realisticPhys && packedJ < 500.0 && sTempType[j].y < 0.5 && dist < vrJ.w * 8.0LF) {\n" +
+                "float tiltRadJ = packedJ * DEG_TO_RAD_F;\n" +
+                "dvec3 spinAxis = dvec3(double(-sin(tiltRadJ)), double(cos(tiltRadJ)), 0.0LF);\n" +
+                "double sinLat = dot(-dir, spinAxis), rRatio2 = (vrJ.w * vrJ.w) * (invEff * invEff);\n" +
+                "accD += (dir * (1.0LF - 5.0LF * sinLat * sinLat) + spinAxis * (2.0LF * sinLat)) * (baseG * 0.016LF * rRatio2);\n" +
+                "}\n" +
+                "} else {\n" +
+                "vec3 d = vec3(pmJ.xyz) - posIF;\n" +
+                "float distSq = max(dot(d, d), 1e-8), invDist = inversesqrt(distSq), dist = distSq * invDist;\n" +
+                "float rJ = max(float(vrJ.w), 0.01), sumRad = max(radIF, 0.01) + rJ, effDist = max(dist, max(sumRad * 0.65, 0.08)), invEff = 1.0 / effDist;\n" +
+                "vec3 dir = d * invDist; float relFactor = 1.0;\n" +
+                "if (realisticPhys) {\n" +
+                "vec3 vRel = velIF - vec3(vrJ.xyz), vTang = fma(dir, vec3(-dot(vRel, dir)), vRel);\n" +
+                "float rsJ = TWO_G_OVER_C2_F * (massIF + float(massJ));\n" +
+                "float pwFactor = 1.0 / max(1.0 - clamp(rsJ * invEff, 0.0, 0.42), 0.58);\n" +
+                "relFactor = pwFactor + clamp(3.0 * dot(vTang, vTang) / MAX_C_SQ_F, 0.0, 0.28);\n" +
+                "}\n" +
+                "float baseG = (G_F * float(massJ) * (invEff * invEff)) * relFactor;\n" +
+                "accF = fma(dir, vec3(baseG), accF);\n" +
+                "float packedJ = sTempType[j].z;\n" +
+                "if (realisticPhys && packedJ < 500.0 && sTempType[j].y < 0.5 && dist < rJ * 6.0) {\n" +
+                "float tiltRadJ = packedJ * DEG_TO_RAD_F;\n" +
+                "vec3 spinAxis = vec3(-sin(tiltRadJ), cos(tiltRadJ), 0.0);\n" +
+                "float sinLat = dot(-dir, spinAxis), rRatio2 = (rJ * rJ) * (invEff * invEff);\n" +
+                "accF += (dir * (1.0 - 5.0 * sinLat * sinLat) + spinAxis * (2.0 * sinLat)) * (baseG * 0.016 * rRatio2);\n" +
+                "}\n" +
+                "}\n" +
+                "}\n" +
+                "return accD + dvec3(accF);\n" +
+                "}\n";
+    }
+
+    private static String buildPhysicsGlslPart3() {
+        return "vec3 calcDebrisAccelerationHybrid(ivec3 secI, vec3 locI, vec3 velI, float radI, float massI, int isFrag, int n, bool gravOn, int precMode, bool realisticPhys) {\n" +
+                "if (!gravOn || n <= 0) return vec3(0.0);\n" +
+                "if (precMode == 0 || !realisticPhys) {\n" +
+                "vec3 acc = vec3(0.0);\n" +
+                "for (int j = 0; j < n; j++) {\n" +
+                "vec4 lmJ = sLocalMass[j]; float massJ = lmJ.w;\n" +
+                "if (!(massJ > 0.0)) continue;\n" +
+                "vec3 d = (precMode == 0) ? (lmJ.xyz - locI) : sectorDelta(sSector[j].xyz, lmJ.xyz, secI, locI);\n" +
+                "float distSq = max(dot(d, d), 1e-8), invDist = inversesqrt(distSq), dist = distSq * invDist;\n" +
+                "float rJ = max(sVelRad[j].w, 0.01), sumRad = max(radI, 0.01) + rJ, effDist = max(dist, max(sumRad * 0.65, 0.08)), invEff = 1.0 / effDist;\n" +
+                "vec3 dir = d * invDist;\n" +
+                "float baseG = G_F * massJ * (invEff * invEff);\n" +
+                "if (realisticPhys && isFrag == 0 && sTempType[j].y > 0.5 && sTempType[j].y < 1.5 && sTempType[j].x > 1200.0) {\n" +
+                "float radPress = clamp((sTempType[j].x - 1200.0) / 14000.0, 0.0, 0.38);\n" +
+                "baseG *= (1.0 - radPress);\n" +
+                "}\n" +
+                "acc = fma(dir, vec3(baseG), acc);\n" +
+                "}\n" +
+                "return acc;\n" +
+                "}\n" +
+                "dvec3 posID = dvec3(secI) * 2.0LF + dvec3(locI);\n" +
+                "dvec3 velID = dvec3(velI);\n" +
+                "dvec3 accD = dvec3(0.0LF);\n" +
+                "vec3 accF = vec3(0.0);\n" +
+                "for (int j = 0; j < n; j++) {\n" +
+                "vec4 lmJ = sLocalMass[j]; float massJF = lmJ.w;\n" +
+                "if (!(massJF > 0.0)) continue;\n" +
+                "float rJF = max(sVelRad[j].w, 0.01);\n" +
+                "vec3 dF = sectorDelta(sSector[j].xyz, lmJ.xyz, secI, locI);\n" +
+                "float distSqF = max(dot(dF, dF), 1e-8);\n" +
+                "bool use64 = (precMode == 2) || (distSqF > 160000.0) || (distSqF < (radI + rJF) * (radI + rJF) * 9.0);\n" +
+                "float radFactor = 1.0;\n" +
+                "if (isFrag == 0 && sTempType[j].y > 0.5 && sTempType[j].y < 1.5 && sTempType[j].x > 1200.0) {\n" +
+                "radFactor = 1.0 - clamp((sTempType[j].x - 1200.0) / 14000.0, 0.0, 0.38);\n" +
+                "}\n" +
+                "if (use64) {\n" +
+                "dvec4 pmJ = sPlanetPosMassD[j]; dvec4 vrJ = sPlanetVelRadD[j];\n" +
+                "dvec3 d = pmJ.xyz - posID;\n" +
+                "double distSq = max(dot(d, d), 1e-12LF), invDist = inversesqrt(distSq), dist = distSq * invDist;\n" +
+                "double sumRad = double(max(radI, 0.01)) + max(vrJ.w, 0.01LF), effDist = max(dist, max(sumRad * 0.65LF, 0.08LF)), invEff = 1.0LF / effDist;\n" +
+                "dvec3 dir = d * invDist;\n" +
+                "dvec3 vRel = velID - vrJ.xyz, vTang = vRel - dir * dot(vRel, dir);\n" +
+                "double relFactor = 1.0LF + clamp(3.0LF * dot(vTang, vTang) / MAX_C_SQ_D, 0.0LF, 0.25LF) + clamp(TWO_G_OVER_C2_D * (double(massI) + pmJ.w) * invEff, 0.0LF, 0.20LF);\n" +
+                "double baseG = (G_D * pmJ.w * (invEff * invEff)) * relFactor * double(radFactor);\n" +
+                "accD += dir * baseG;\n" +
+                "} else {\n" +
+                "float invDist = inversesqrt(distSqF), dist = distSqF * invDist;\n" +
+                "float sumRad = max(radI, 0.01) + rJF, effDist = max(dist, max(sumRad * 0.65, 0.08)), invEff = 1.0 / effDist;\n" +
+                "vec3 dir = dF * invDist;\n" +
+                "vec3 vRel = velI - sVelRad[j].xyz, vTang = fma(dir, vec3(-dot(vRel, dir)), vRel);\n" +
+                "float relFactor = 1.0 + clamp(3.0 * dot(vTang, vTang) / MAX_C_SQ_F, 0.0, 0.25) + clamp(TWO_G_OVER_C2_F * (massI + massJF) * invEff, 0.0, 0.20);\n" +
+                "float baseG = (G_F * massJF * (invEff * invEff)) * relFactor * radFactor;\n" +
+                "accF = fma(dir, vec3(baseG), accF);\n" +
+                "}\n" +
+                "}\n" +
+                "return vec3(accD) + accF;\n" +
+                "}\n";
+    }
+
+    private static String buildPhysicsGlslPart4() {
+        return "void main() {\n" +
+                "uint localIdx = gl_LocalInvocationID.x;\n" +
+                "int n = clamp(pc.planetCount, 0, 64);\n" +
+                "bool gravOn = (pc.flags & 1) != 0, rocheOn = (pc.flags & 2) != 0, centrifOn = (pc.flags & 4) != 0, collOn = (pc.flags & 8) != 0;\n" +
+                "bool realisticPhys = (pc.flags & 16) != 0, accretionDiskOn = (pc.flags & 32) != 0;\n" +
+                "int precMode = (pc.flags >> 6) & 3;\n" +
+                "int draggedIdx = (pc.flags >> 8) - 1;\n" +
+                "if (int(localIdx) < n) {\n" +
+                "dvec4 pm = pb.planets[localIdx].posAndMass, vr = pb.planets[localIdx].velAndRadius;\n" +
+                "sPlanetPosMassD[localIdx] = pm; sPlanetVelRadD[localIdx] = dvec4(vr.xyz, max(vr.w, 0.01LF));\n" +
+                "if (precMode == 0) {\n" +
+                "sSector[localIdx] = ivec4(0); sLocalMass[localIdx] = vec4(vec3(pm.xyz), float(pm.w));\n" +
+                "} else {\n" +
+                "ivec3 sec; vec3 loc; worldDoubleToSector(pm.xyz, sec, loc);\n" +
+                "sSector[localIdx] = ivec4(sec, 0); sLocalMass[localIdx] = vec4(loc, float(pm.w));\n" +
+                "}\n" +
+                "sVelRad[localIdx] = vec4(vec3(vr.xyz), max(float(vr.w), 0.01));\n" +
+                "sTempType[localIdx] = vec4(float(pb.planets[localIdx].rotAndTemp.w), float(pb.planets[localIdx].stateAndShed.x), float(pb.planets[localIdx].stateAndShed.y), float(pb.planets[localIdx].rotAndTemp.x));\n" +
+                "} else {\n" +
+                "sPlanetPosMassD[localIdx] = dvec4(0.0LF); sPlanetVelRadD[localIdx] = dvec4(0.0LF, 0.0LF, 0.0LF, 1.0LF);\n" +
+                "sSector[localIdx] = ivec4(0); sLocalMass[localIdx] = vec4(0.0); sVelRad[localIdx] = vec4(0,0,0,1); sTempType[localIdx] = vec4(0.0);\n" +
+                "}\n" +
+                "barrier();\n" +
+                "double subDtD = pc.subDt, halfDtD = 0.5LF * subDtD, totalDtD = subDtD * double(pc.subSteps);\n" +
+                "float subDtF = float(subDtD), halfDtF = 0.5 * subDtF;\n" +
+                "float totalDt = float(totalDtD), absTotalDt = abs(totalDt), dtRealF = float(pc.dtReal);\n" +
+                "if (gl_WorkGroupID.x > 0u) {\n" +
+                "uint dIdx = (gl_WorkGroupID.x - 1u) * 64u + localIdx;\n" +
+                "bool validDeb = int(dIdx) < pc.debrisCount;\n" +
+                "ivec4 secType = validDeb ? db.debris[dIdx].sectorAndType : ivec4(0);\n" +
+                "vec4 locSize = validDeb ? db.debris[dIdx].localPosAndSize : vec4(0.0);\n" +
+                "vec4 velStat = validDeb ? db.debris[dIdx].velAndStatus : vec4(0,0,0,-1);\n" +
+                "vec4 mta = validDeb ? db.debris[dIdx].massTempAngle : vec4(0.0);\n" +
+                "bool activeDeb = validDeb && (velStat.w > 0.0);\n" +
+                "ivec3 dSec = (precMode == 0) ? ivec3(0) : secType.xyz; int isFrag = secType.w;\n" +
+                "vec3 dLoc = (precMode == 0) ? (vec3(secType.xyz) * SECTOR_SIZE_F + locSize.xyz) : locSize.xyz;\n" +
+                "vec3 dVel = velStat.xyz;\n" +
+                "float dSize = max(locSize.w, 0.01), dMass = max(mta.x, 1e-7), dTemp = mta.y, dAngle = mta.z, graceTimer = max(0.0, mta.w - dtRealF);\n" +
+                "int maxDSteps = realisticPhys ? ((precMode == 0) ? 6 : ((precMode == 1) ? 10 : 14)) : 4;\n" +
+                "int absorbedByPlanet = -1, dSteps = clamp(pc.subSteps, 1, maxDSteps);\n" +
+                "float dDt = totalDt / float(dSteps), dHalfDt = 0.5 * dDt;\n" +
+                "if (activeDeb) {\n" +
+                "vec3 dAcc = calcDebrisAccelerationHybrid(dSec, dLoc, dVel, dSize, dMass, isFrag, n, gravOn, precMode, realisticPhys);\n" +
+                "dVel = fma(dAcc, vec3(dHalfDt), dVel);\n" +
+                "for (int s = 0; s < dSteps; s++) {\n" +
+                "float spSq = dot(dVel, dVel); if (spSq > MAX_C_SQ_F) dVel *= (MAX_C_F * inversesqrt(spSq));\n" +
+                "dLoc = fma(dVel, vec3(dDt), dLoc);\n" +
+                "if (precMode != 0) normalizeSectorPos(dSec, dLoc);\n" +
+                "if (collOn && graceTimer <= 0.0) {\n" +
+                "for (int j = 0; j < n; j++) {\n" +
+                "if (!(sLocalMass[j].w > 0.0)) continue;\n" +
+                "vec3 toP = (precMode == 0) ? (sLocalMass[j].xyz - dLoc) : sectorDelta(sSector[j].xyz, sLocalMass[j].xyz, dSec, dLoc);\n" +
+                "float distSq = max(dot(toP, toP), 1e-8), rJ = max(sVelRad[j].w, 0.01);\n" +
+                "if (distSq < (rJ + dSize) * (rJ + dSize) * 2.5) {\n" +
+                "float invD = inversesqrt(distSq), dist = distSq * invD, packedJ = sTempType[j].z;\n" +
+                "float tiltRadJ = ((packedJ >= 500.0) ? (packedJ - 1000.0) : packedJ) * DEG_TO_RAD_F;\n" +
+                "float rCubeJ = cubeSupportRadius(-toP * invD, rJ, tiltRadJ, sTempType[j].w * DEG_TO_RAD_F);\n" +
+                "if (dist < rCubeJ + dSize * 0.45) { absorbedByPlanet = j; activeDeb = false; break; }\n" +
+                "}\n" +
+                "}\n" +
+                "if (!activeDeb) break;\n" +
+                "}\n" +
+                "vec3 nextAcc = calcDebrisAccelerationHybrid(dSec, dLoc, dVel, dSize, dMass, isFrag, n, gravOn, precMode, realisticPhys);\n" +
+                "dVel = fma(nextAcc, vec3((s + 1 < dSteps) ? dDt : dHalfDt), dVel);\n" +
+                "}\n" +
+                "}\n" +
+                "if (realisticPhys) {\n" +
+                "sDebSec[localIdx] = ivec4(dSec, activeDeb ? (isFrag != 0 ? 1 : 2) : 0);\n" +
+                "sDebLocSize[localIdx] = vec4(dLoc, dSize); sDebVelMass[localIdx] = vec4(dVel, dMass);\n" +
+                "barrier();\n" +
+                "if (activeDeb) {\n" +
+                "vec3 debGravAcc = vec3(0.0);\n" +
+                "for (uint k = 0u; k < 64u; k++) {\n" +
+                "int kState = sDebSec[k].w;\n" +
+                "if (k == localIdx || kState == 0) continue;\n" +
+                "if (precMode != 0 && (abs(dSec.x - sDebSec[k].x) > 4 || abs(dSec.y - sDebSec[k].y) > 4 || abs(dSec.z - sDebSec[k].z) > 4)) continue;\n" +
+                "vec3 delta = (precMode == 0) ? (sDebLocSize[k].xyz - dLoc) : sectorDelta(sDebSec[k].xyz, sDebLocSize[k].xyz, dSec, dLoc);\n" +
+                "float rawDistSq = max(dot(delta, delta), 1e-8);\n" +
+                "if (rawDistSq > 64.0) continue;\n" +
+                "float otherSize = sDebLocSize[k].w, otherMass = max(sDebVelMass[k].w, 1e-7);\n" +
+                "float minSep = (dSize + otherSize) * ((isFrag != 0 && kState == 1) ? 1.38 : 1.75);\n" +
+                "if (gravOn) {\n" +
+                "float effSq = max(rawDistSq, minSep * minSep * 0.65);\n" +
+                "debGravAcc += delta * (inversesqrt(rawDistSq) * (G_F * otherMass * 6.0 / effSq));\n" +
+                "}\n" +
+                "if (collOn && rawDistSq < minSep * minSep) {\n" +
+                "float dist = sqrt(rawDistSq); vec3 nDir = delta / max(dist, 1e-5);\n" +
+                "vec3 relV = dVel - sDebVelMass[k].xyz;\n" +
+                "float approach = dot(relV, nDir);\n" +
+                "if (approach > 0.0) {\n" +
+                "float mShare = otherMass / (dMass + otherMass);\n" +
+                "float restitution = (isFrag != 0 && kState == 1) ? 1.55 : 1.12;\n" +
+                "dVel -= nDir * (restitution * approach * mShare);\n" +
+                "dTemp = min(8500.0, dTemp + approach * approach * 28.0 * mShare);\n" +
+                "}\n" +
+                "if (dist < minSep) { dLoc -= nDir * ((minSep - dist) * 0.50); if (precMode != 0) normalizeSectorPos(dSec, dLoc); }\n" +
+                "}\n" +
+                "}\n" +
+                "dVel = fma(debGravAcc, vec3(totalDt), dVel);\n" +
+                "}\n" +
+                "}\n" +
+                "if (!validDeb) return;\n" +
+                "if (absorbedByPlanet >= 0) {\n" +
+                "db.debris[dIdx].sectorAndType = ivec4(dSec, isFrag); db.debris[dIdx].localPosAndSize = vec4(dLoc, dSize);\n" +
+                "db.debris[dIdx].velAndStatus = vec4(dVel, -10.0 - float(absorbedByPlanet)); db.debris[dIdx].massTempAngle = vec4(dMass, dTemp, dAngle, 0.0);\n" +
+                "return;\n" +
+                "}\n" +
+                "if (!activeDeb) return;\n" +
+                "if (realisticPhys) {\n" +
+                "float fragSnow = calcSnowCoverage(dTemp, dSize, dMass, 6.0, 0.30, isFrag != 0);\n" +
+                "float absorb = 1.0 - ((isFrag != 0) ? mix(0.14, 0.82, fragSnow) : 0.38), radFluxT4 = 53.1441;\n" +
+                "for (int j = 0; j < n; j++) {\n" +
+                "if (!(sLocalMass[j].w > 0.0)) continue;\n" +
+                "vec3 toP = (precMode == 0) ? (sLocalMass[j].xyz - dLoc) : sectorDelta(sSector[j].xyz, sLocalMass[j].xyz, dSec, dLoc);\n" +
+                "float dist = max(length(toP), 0.01), rJ = max(sVelRad[j].w, 0.01);\n" +
+                "float effEmitTempC = (sTempType[j].y > 1.5 && accretionDiskOn) ? 9500.0 : sTempType[j].x;\n" +
+                "float effRadJ = (sTempType[j].y > 1.5 && accretionDiskOn) ? (rJ * 3.8) : (rJ * 0.72);\n" +
+                "float tJK = clamp(effEmitTempC + 273.15, 2.7, 40000.0);\n" +
+                "if (tJK > 150.0) { float geom = effRadJ / max(dist, rJ), t2 = tJK * tJK; radFluxT4 += (t2 * t2) * (geom * geom) * absorb; }\n" +
+                "if (sTempType[j].y > 1.5 && dist < rJ * (accretionDiskOn ? 18.0 : 12.0)) dTemp = max(dTemp, 1200.0 + 4800.0 * (rJ * 5.0 / max(dist, rJ)));\n" +
+                "}\n" +
+                "dTemp = stepStefanBoltzmann(dTemp, radFluxT4, clamp((dSize * dSize) / max(dMass * 60.0, 1e-6), 0.05, 18.0), 0.0, absTotalDt);\n" +
+                "}\n" +
+                "if (isFrag != 0) dAngle = mod(dAngle + 28.0 * (totalDt / 3600.0), 360.0);\n" +
+                "db.debris[dIdx].sectorAndType = ivec4(dSec, isFrag); db.debris[dIdx].localPosAndSize = vec4(dLoc, dSize);\n" +
+                "db.debris[dIdx].velAndStatus = vec4(dVel, 1000000.0); db.debris[dIdx].massTempAngle = vec4(dMass, dTemp, dAngle, graceTimer);\n" +
+                "return;\n" +
+                "}\n";
+    }
+
+    private static String buildPhysicsGlslPart5() {
+        return "uint idx = localIdx;\n" +
+                "bool isValid = int(idx) < n, isDragged = isValid && (int(idx) == draggedIdx);\n" +
+                "dvec3 posD = sPlanetPosMassD[idx].xyz; double massD = sPlanetPosMassD[idx].w;\n" +
+                "dvec3 velD = isDragged ? dvec3(0.0LF) : sPlanetVelRadD[idx].xyz; double radD = max(sPlanetVelRadD[idx].w, 0.01LF);\n" +
+                "vec3 posF = vec3(posD), velF = vec3(velD);\n" +
+                "float radF = float(radD), massF = float(massD);\n" +
+                "double angle = isValid ? pb.planets[idx].rotAndTemp.x : 0.0LF, rotPeriod = isValid ? pb.planets[idx].rotAndTemp.y : 24.0LF;\n" +
+                "double targetRad = isValid ? max(pb.planets[idx].rotAndTemp.z, 0.01LF) : radD;\n" +
+                "float tempC = sTempType[idx].x, objType = sTempType[idx].y, packedRT = sTempType[idx].z;\n" +
+                "bool isRigid = (packedRT >= 500.0); float tiltRad = (isRigid ? (packedRT - 1000.0) : packedRT) * DEG_TO_RAD_F;\n" +
+                "float bondAlbedo = isValid ? clamp(float(pb.planets[idx].stateAndShed.z), 0.0, 0.95) : 0.3;\n" +
+                "double totalShedMass = 0.0LF, eventCode = -1.0LF;\n" +
+                "if (precMode == 0) {\n" +
+                "vec3 accF = (isValid && !isDragged && massF > 0.0) ? calcAccelerationFloat32(int(idx), posF, velF, radF, massF, n, gravOn, realisticPhys) : vec3(0.0);\n" +
+                "if (isValid && !isDragged && massF > 0.0) velF += accF * halfDtF;\n" +
+                "for (int step = 0; step < pc.subSteps; step++) {\n" +
+                "if (isValid && !isDragged && massF > 0.0) {\n" +
+                "float spSq = dot(velF, velF); if (spSq > MAX_C_SQ_F) velF *= (MAX_C_F * inversesqrt(spSq));\n" +
+                "posF += velF * subDtF;\n" +
+                "}\n" +
+                "sLocalMass[idx] = vec4(posF, massF); sVelRad[idx] = vec4(velF, radF);\n" +
+                "barrier();\n" +
+                "vec3 newAccF = (isValid && !isDragged && massF > 0.0) ? calcAccelerationFloat32(int(idx), posF, velF, radF, massF, n, gravOn, realisticPhys) : vec3(0.0);\n" +
+                "if (isValid && !isDragged && massF > 0.0) {\n" +
+                "velF += newAccF * ((step + 1 < pc.subSteps) ? subDtF : halfDtF);\n" +
+                "float spSq2 = dot(velF, velF); if (spSq2 > MAX_C_SQ_F) velF *= (MAX_C_F * inversesqrt(spSq2));\n" +
+                "}\n" +
+                "barrier();\n" +
+                "}\n" +
+                "posD = dvec3(posF); velD = dvec3(velF);\n" +
+                "sPlanetPosMassD[idx] = dvec4(posD, massD); sPlanetVelRadD[idx] = dvec4(velD, radD);\n" +
+                "} else {\n" +
+                "bool bodyNeeds64 = (precMode == 2);\n" +
+                "if (precMode == 1 && isValid) {\n" +
+                "vec3 stepF = velF * subDtF;\n" +
+                "vec3 sumF = posF + stepF;\n" +
+                "vec3 errF = abs((sumF - posF) - stepF);\n" +
+                "bodyNeeds64 = (dot(posF, posF) > 67108864.0) || (max(max(errF.x, errF.y), errF.z) > 1e-5 * max(length(stepF), 1e-6));\n" +
+                "}\n" +
+                "dvec3 accD = (isValid && !isDragged && massD > 0.0LF) ? calcAccelerationHybrid(int(idx), posD, velD, radD, massD, n, gravOn, bodyNeeds64, realisticPhys) : dvec3(0.0LF);\n" +
+                "if (isValid && !isDragged && massD > 0.0LF) velD += accD * halfDtD;\n" +
+                "for (int step = 0; step < pc.subSteps; step++) {\n" +
+                "if (isValid && !isDragged && massD > 0.0LF) {\n" +
+                "if (!bodyNeeds64) {\n" +
+                "vec3 vF = vec3(velD); float spSq = dot(vF, vF); if (spSq > MAX_C_SQ_F) vF *= (MAX_C_F * inversesqrt(spSq));\n" +
+                "posF = vec3(posD) + vF * subDtF; posD = dvec3(posF); velD = dvec3(vF);\n" +
+                "} else {\n" +
+                "double spSq = dot(velD, velD); if (spSq > MAX_C_SQ_D) velD *= (MAX_C_D * inversesqrt(spSq));\n" +
+                "posD += velD * subDtD;\n" +
+                "}\n" +
+                "}\n" +
+                "sPlanetPosMassD[idx] = dvec4(posD, massD); sPlanetVelRadD[idx] = dvec4(velD, radD);\n" +
+                "barrier();\n" +
+                "dvec3 newAccD = (isValid && !isDragged && massD > 0.0LF) ? calcAccelerationHybrid(int(idx), posD, velD, radD, massD, n, gravOn, bodyNeeds64, realisticPhys) : dvec3(0.0LF);\n" +
+                "if (isValid && !isDragged && massD > 0.0LF) {\n" +
+                "velD += newAccD * ((step + 1 < pc.subSteps) ? subDtD : halfDtD);\n" +
+                "double spSq2 = dot(velD, velD); if (spSq2 > MAX_C_SQ_D) velD *= (MAX_C_D * inversesqrt(spSq2));\n" +
+                "}\n" +
+                "barrier();\n" +
+                "}\n" +
+                "}\n" +
+                "ivec3 sec; vec3 loc;\n" +
+                "if (precMode == 0) { sec = ivec3(0); loc = vec3(posD); }\n" +
+                "else { worldDoubleToSector(posD, sec, loc); }\n" +
+                "float mass = float(massD), rad = float(radD); vec3 vel = vec3(velD);\n" +
+                "sSector[idx] = ivec4(sec, 0); sLocalMass[idx] = vec4(loc, mass); sVelRad[idx] = vec4(vel, rad);\n" +
+                "float snowFrac = calcSnowCoverage(tempC, rad, mass, float(rotPeriod), bondAlbedo, isRigid && objType < 0.5);\n" +
+                "float effAlbedo = (objType < 0.5) ? clamp(mix(bondAlbedo, 0.86, snowFrac * 0.85), 0.05, 0.94) : 0.0;\n" +
+                "float emitTempC = (objType > 1.5 && accretionDiskOn) ? 9500.0 : tempC;\n" +
+                "float tempSelfK = clamp(emitTempC + 273.15, 2.7, 40000.0), tSelf2 = tempSelfK * tempSelfK;\n" +
+                "sRadiosityPass1[idx] = vec4(tSelf2 * tSelf2, 0.0, effAlbedo, float(rotPeriod));\n" +
+                "barrier();\n" +
+                "float pass1IncomingT4 = 0.0;\n" +
+                "if (isValid && mass > 0.0 && realisticPhys) {\n" +
+                "for (int j = 0; j < n; j++) {\n" +
+                "if (uint(j) == idx || !(sLocalMass[j].w > 0.0)) continue;\n" +
+                "vec3 dVec = vec3(sPlanetPosMassD[j].xyz - posD);\n" +
+                "float dist = max(length(dVec), 1e-4), radJ = max(sVelRad[j].w, 0.01);\n" +
+                "float effRadJ = (sTempType[j].y > 1.5 && accretionDiskOn) ? (radJ * 3.8) : (radJ * 0.72);\n" +
+                "float geom = effRadJ / max(dist, radJ);\n" +
+                "pass1IncomingT4 += sRadiosityPass1[j].x * (geom * geom);\n" +
+                "}\n" +
+                "}\n" +
+                "sRadiosityPass1[idx].y = pass1IncomingT4 * (effAlbedo * 0.65 + (1.0 - effAlbedo) * 0.35);\n" +
+                "barrier();\n" +
+                "if (isValid && mass > 0.0) {\n" +
+                "if (abs(rotPeriod) > 0.0001LF) angle = mod(angle + (360.0LF / (rotPeriod * 3600.0LF)) * totalDtD, 360.0LF);\n" +
+                "if (abs(radD - targetRad) > 0.0001LF) { radD = max(0.01LF, radD + (targetRad - radD) * min(1.0LF, 12.0LF * abs(totalDtD))); rad = float(radD); }\n" +
+                "if (centrifOn && realisticPhys && objType < 1.5) {\n" +
+                "double signRot = (rotPeriod < 0.0LF) ? -1.0LF : 1.0LF, safeRot = max(0.0001LF, abs(rotPeriod));\n" +
+                "float wCurr = float((2.0LF * double(PI_F)) / (safeRot * 3600.0LF)), wCrit = sqrt((G_F * mass) / max(rad * rad * rad, 1e-6));\n" +
+                "if (wCurr > wCrit) {\n" +
+                "float excess = min((wCurr - wCrit) / max(wCrit, 1e-6), 2.0);\n" +
+                "rotPeriod = signRot * safeRot * (1.0LF + double(excess * 0.85 * absTotalDt));\n" +
+                "float shed = min(mass * 0.15, mass * 0.35 * absTotalDt * excess);\n" +
+                "if (shed > 1e-6 && (mass - shed) > 1e-6) {\n" +
+                "float oldMass = mass; mass -= shed; massD = double(mass); totalShedMass += double(shed);\n" +
+                "targetRad = max(0.02LF, targetRad * double(cbrtFast(mass / oldMass))); radD = targetRad; rad = float(radD);\n" +
+                "tempC += excess * 120.0 * absTotalDt;\n" +
+                "}\n" +
+                "}\n" +
+                "}\n" +
+                "float incomingRadT4 = 53.1441, rhoSelf = mass / max((4.0 / 3.0) * PI_F * rad * rad * rad, 1e-6);\n" +
+                "float rotRadSelf = float(angle) * DEG_TO_RAD_F, absorptionFactor = 1.0 - effAlbedo;\n" +
+                "for (int j = 0; j < n; j++) {\n" +
+                "if (uint(j) == idx || !(mass > 0.0)) continue;\n" +
+                "float massJ = sLocalMass[j].w; if (!(massJ > 0.0)) continue;\n" +
+                "vec3 velJ = sVelRad[j].xyz;\n" +
+                "float radJ = max(sVelRad[j].w, 0.01), tempJC = sTempType[j].x, typeJ = sTempType[j].y, packedJ = sTempType[j].z;\n" +
+                "float tiltRadJ = ((packedJ >= 500.0) ? (packedJ - 1000.0) : packedJ) * DEG_TO_RAD_F;\n" +
+                "vec3 dVec = vec3(sPlanetPosMassD[j].xyz - posD);\n" +
+                "float distSq = max(dot(dVec, dVec), 1e-10), invDist = inversesqrt(distSq), dist = distSq * invDist;\n" +
+                "vec3 unitDir = dVec * invDist;\n" +
+                "float sumCubeRad = cubeSupportRadius(unitDir, rad, tiltRad, rotRadSelf) + cubeSupportRadius(-unitDir, radJ, tiltRadJ, sTempType[j].w * DEG_TO_RAD_F);\n" +
+                "if (realisticPhys) {\n" +
+                "vec4 radJData = sRadiosityPass1[j];\n" +
+                "float effRadJ = (typeJ > 1.5 && accretionDiskOn) ? (radJ * 3.8) : (radJ * 0.72);\n" +
+                "float geom = effRadJ / max(dist, radJ);\n" +
+                "incomingRadT4 += (radJData.x + radJData.y * 0.65) * (geom * geom) * absorptionFactor;\n" +
+                "if (objType < 0.5 && massJ > mass * 10.0 && dist < radJ * 28.0 && dist > sumCubeRad) {\n" +
+                "float rRatio = radJ / max(dist, radJ);\n" +
+                "float rRatio3 = rRatio * rRatio * rRatio;\n" +
+                "float tidalPower = (rRatio3 * rRatio3) * (massJ / max(mass, 1e-4)) * 0.0012;\n" +
+                "tempC = min(6500.0, tempC + min(tidalPower * 180.0, 45.0) * absTotalDt);\n" +
+                "float syncPeriodHrs = (2.0 * PI_F * dist * sqrt(dist / max(G_F * (mass + massJ), 1e-6))) / 3600.0;\n" +
+                "float syncRate = clamp(tidalPower * 0.04 * absTotalDt, 0.0, 0.25);\n" +
+                "rotPeriod = mix(rotPeriod, double(clamp(syncPeriodHrs, 1.0, 50000.0)), double(syncRate));\n" +
+                "}\n" +
+                "}\n" +
+                "if (collOn && dist < sumCubeRad) {\n" +
+                "bool selfBigger = (rad > radJ * 1.0001) || (abs(rad - radJ) <= rad * 0.0001 && mass > massJ) || (abs(rad - radJ) <= rad * 0.0001 && mass == massJ && idx < uint(j));\n" +
+                "float smallMass = selfBigger ? massJ : mass, smallRad = selfBigger ? radJ : rad, bigRad = selfBigger ? rad : radJ;\n" +
+                "float overlap = max(0.0, sumCubeRad - dist), penDepth = clamp(overlap / max(smallRad * 2.0, 0.02), 0.05, 1.0);\n" +
+                "float mergeStep = clamp(absTotalDt * (0.85 + penDepth * 2.8), 0.015, 0.38), transfer = min(smallMass, smallMass * mergeStep);\n" +
+                "float relSpeedSq = dot(vel - velJ, vel - velJ);\n" +
+                "if (selfBigger) {\n" +
+                "float splashFrac = (!isRigid) ? 0.28 : ((tempC < -15.0) ? 0.22 : 0.12);\n" +
+                "float splashMass = transfer * splashFrac, absorbedMass = transfer - splashMass;\n" +
+                "double newMassD = massD + double(absorbedMass);\n" +
+                "if (!isDragged) { velD = (velD * massD + sPlanetVelRadD[j].xyz * double(absorbedMass)) / max(newMassD, 1e-9LF); vel = vec3(velD); }\n" +
+                "if (objType < 1.5) {\n" +
+                "float massRatio = transfer / max(float(newMassD), 1e-9);\n" +
+                "tempC = min(35000.0, tempC + (max(0.0, tempJC - tempC) + 520.0 + relSpeedSq * 75.0) * massRatio);\n" +
+                "totalShedMass += double(splashMass);\n" +
+                "}\n" +
+                "massD = newMassD; mass = float(massD);\n" +
+                "float volGain = (smallRad * smallRad * smallRad) * (absorbedMass / max(smallMass, 1e-9));\n" +
+                "targetRad = max(0.02LF, double(cbrtFast(float(targetRad * targetRad * targetRad) + volGain)));\n" +
+                "radD = max(radD, targetRad); rad = float(radD); eventCode = double(200 + j);\n" +
+                "} else {\n" +
+                "float oldM = mass; mass -= transfer; massD = double(max(0.0, mass));\n" +
+                "if (!isDragged) {\n" +
+                "velD = mix(velD, sPlanetVelRadD[j].xyz, double(clamp(mergeStep * 1.65, 0.05, 0.85))); vel = vec3(velD);\n" +
+                "posD += dvec3(unitDir) * double(min(overlap * 0.35, smallRad * 0.4) * mergeStep);\n" +
+                "}\n" +
+                "if (objType < 1.5) {\n" +
+                "totalShedMass += double(transfer * 0.24);\n" +
+                "tempC = min(35000.0, tempC + (420.0 + relSpeedSq * 24.0) * (transfer / max(oldM, 1e-9)));\n" +
+                "}\n" +
+                "eventCode = double(j);\n" +
+                "if (mass <= 1e-5 || rad < bigRad * 0.08 || dist < bigRad * 0.55) {\n" +
+                "mass = 0.0; massD = 0.0LF; rad = 0.01; radD = 0.01LF; targetRad = 0.01LF;\n" +
+                "} else {\n" +
+                "targetRad = max(0.02LF, targetRad * double(cbrtFast(mass / max(oldM, 1e-9)))); radD = targetRad; rad = float(radD);\n" +
+                "}\n" +
+                "}\n" +
+                "}\n" +
+                "if (rocheOn && realisticPhys && objType < 1.5 && mass > 1e-6 && radJ > rad * 1.35 && massJ > mass * 2.0) {\n" +
+                "float rhoJ = massJ / max((4.0 / 3.0) * PI_F * radJ * radJ * radJ, 1e-6);\n" +
+                "if (rhoSelf > 0.0 && rhoJ > 0.0) {\n" +
+                "float tensileResist = isRigid ? clamp(rad / 1.2, 0.35, 1.0) : 1.0;\n" +
+                "float rocheLimit = (isRigid ? 1.44 : 2.456) * radJ * cbrtFast(rhoJ / rhoSelf) * tensileResist;\n" +
+                "if (typeJ > 1.5) rocheLimit = max(rocheLimit * 0.35, radJ * 8.5);\n" +
+                "if (dist < rocheLimit && dist > sumCubeRad) {\n" +
+                "float depth = clamp(1.0 - (dist / max(rocheLimit, 1e-4)), 0.0, 1.0);\n" +
+                "float shed = min(mass * 0.25, mass * ((typeJ > 1.5) ? (0.35 + depth * 2.2) : (0.1 + depth * 0.9)) * absTotalDt);\n" +
+                "if (shed > 1e-6) {\n" +
+                "float oldM = mass;\n" +
+                "if (mass - shed <= 1e-6) { totalShedMass += double(mass); mass = 0.0; massD = 0.0LF; rad = 0.01; radD = 0.01LF; targetRad = 0.01LF; }\n" +
+                "else { mass -= shed; massD = double(mass); totalShedMass += double(shed); targetRad = max(0.02LF, targetRad * double(cbrtFast(mass / oldM))); radD = targetRad; rad = float(radD); }\n" +
+                "eventCode = double(j + (typeJ > 1.5 ? 100 : 0));\n" +
+                "tempC = min(35000.0, tempC + ((typeJ > 1.5 ? 1800.0 : 450.0) + depth * 3200.0) * absTotalDt);\n" +
+                "}\n" +
+                "}\n" +
+                "}\n" +
+                "}\n" +
+                "}\n" +
+                "if (realisticPhys && objType < 1.5 && mass > 0.0) {\n" +
+                "float areaToMass = clamp((rad * rad) / max(mass * (isRigid ? 14.0 : 28.0), 1e-4), 0.001, 2.5);\n" +
+                "float steamGH = (objType < 0.5 && isRigid && bondAlbedo >= 0.18) ? (0.35 * clamp((tempC - 35.0) / 90.0, 0.0, 1.0) * clamp((260.0 - tempC) / 90.0, 0.0, 1.0)) : 0.0;\n" +
+                "float so2GH = (objType < 0.5 && bondAlbedo > 0.68 && bondAlbedo < 0.78) ? 1.85 : ((objType < 0.5 && bondAlbedo > 0.23 && bondAlbedo < 0.255) ? 0.08 : 0.0);\n" +
+                "if (objType < 0.5 || sqrt(sqrt(incomingRadT4)) > (tempC + 273.15)) {\n" +
+                "tempC = stepStefanBoltzmann(tempC, incomingRadT4, areaToMass, steamGH + so2GH, absTotalDt);\n" +
+                "}\n" +
+                "}\n" +
+                "if (isnan(posD.x) || isinf(posD.x) || isnan(velD.x) || isinf(velD.x) || isnan(rad) || isinf(rad)) {\n" +
+                "massD = 0.0LF; radD = 0.01LF; targetRad = 0.01LF; velD = dvec3(0.0LF);\n" +
+                "}\n" +
+                "}\n" +
+                "if (isValid) {\n" +
+                "pb.planets[idx].posAndMass = dvec4(posD, massD); pb.planets[idx].velAndRadius = dvec4(velD, radD);\n" +
+                "pb.planets[idx].rotAndTemp = dvec4(angle, rotPeriod, targetRad, double(tempC));\n" +
+                "pb.planets[idx].stateAndShed = dvec4(double(objType), double(packedRT), totalShedMass, eventCode);\n" +
+                "}\n" +
+                "}\n";
+    }
+
     public static void init() {
         if (gpuPhysicsReady || SBoxVulkanCore.logicalDevice == null) return;
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkDevice device = SBoxVulkanCore.logicalDevice;
 
-            String glsl =
-                    "#version 450\n" +
-                            "#extension GL_ARB_gpu_shader_fp64 : enable\n" +
-                            "layout (local_size_x = 64) in;\n" +
-                            "struct GpuPlanet { dvec4 posAndMass; dvec4 velAndRadius; dvec4 rotAndTemp; dvec4 stateAndShed; };\n" +
-                            "struct GpuDebris { ivec4 sectorAndType; vec4 localPosAndSize; vec4 velAndStatus; vec4 massTempAngle; };\n" +
-                            "layout (std430, binding = 0) buffer PlanetPhysicsBuffer { GpuPlanet planets[64]; } pb;\n" +
-                            "layout (std430, binding = 1) buffer DebrisPhysicsBuffer { GpuDebris debris[65536]; } db;\n" +
-                            "layout (push_constant) uniform PushConstants { double subDt; double dtReal; int planetCount; int debrisCount; int subSteps; int flags; } pc;\n" +
-                            "const double G_D = 0.00019926275949971405LF, MAX_C_D = 237.93052222222222LF, MAX_C_SQ_D = 56610.93340559396LF, TWO_G_OVER_C2_D = 7.039726890892425e-9LF;\n" +
-                            "const float G_F = 0.00019926276, MAX_C_F = 237.93052, MAX_C_SQ_F = 56610.934, TWO_G_OVER_C2_F = 7.039727e-9;\n" +
-                            "const float PI_F = 3.14159265, DEG_TO_RAD_F = 0.0174532925, SECTOR_SIZE_F = 2.0, INV_SECTOR_SIZE_F = 0.5;\n" +
-                            "shared dvec4 sPlanetPosMassD[64], sPlanetVelRadD[64];\n" +
-                            "shared ivec4 sSector[64], sDebSec[64];\n" +
-                            "shared vec4 sLocalMass[64], sVelRad[64], sTempType[64], sRadiosityPass1[64], sDebLocSize[64], sDebVelMass[64];\n" +
-                            "void worldDoubleToSector(dvec3 wPos, out ivec3 sec, out vec3 loc) {\n" +
-                            "dvec3 secD = floor(wPos * 0.5LF + dvec3(0.5LF)); sec = ivec3(secD); loc = vec3(wPos - secD * 2.0LF);\n" +
-                            "}\n" +
-                            "void normalizeSectorPos(inout ivec3 sec, inout vec3 loc) {\n" +
-                            "ivec3 shift = ivec3(floor(loc * INV_SECTOR_SIZE_F + vec3(0.5))); sec += shift; loc -= vec3(shift) * SECTOR_SIZE_F;\n" +
-                            "}\n" +
-                            "vec3 sectorDelta(ivec3 secJ, vec3 locJ, ivec3 secI, vec3 locI) {\n" +
-                            "return vec3(secJ - secI) * SECTOR_SIZE_F + (locJ - locI);\n" +
-                            "}\n" +
-                            "float cbrtFast(float v) {\n" +
-                            "if (isnan(v) || isinf(v) || !(v > 1e-12)) return 0.01;\n" +
-                            "float r = pow(v, 0.33333334); r = (2.0 * r + v / max(r * r, 1e-18)) * 0.33333334; return max(r, 0.01);\n" +
-                            "}\n" +
-                            "float cubeSupportRadius(vec3 unitDir, float halfExt, float tiltRad, float rotRad) {\n" +
-                            "float ct = cos(-tiltRad), st = sin(-tiltRad), cr = cos(-rotRad), sr = sin(-rotRad);\n" +
-                            "vec3 uz = vec3(ct * unitDir.x - st * unitDir.y, st * unitDir.x + ct * unitDir.y, unitDir.z);\n" +
-                            "vec3 ul = abs(vec3(cr * uz.x + sr * uz.z, uz.y, -sr * uz.x + cr * uz.z));\n" +
-                            "return halfExt / max(max(ul.x, ul.y), max(ul.z, 0.57735026));\n" +
-                            "}\n" +
-                            "float calcSnowCoverage(float tempC, float rad, float mass, float rotPeriod, bool isRigid) {\n" +
-                            "if (!isRigid || tempC > 30.0) return 0.0;\n" +
-                            "float safeRot = max(0.0001, abs(rotPeriod));\n" +
-                            "float wCurr = (2.0 * PI_F) / (safeRot * 3600.0), wCrit = sqrt((G_F * max(mass, 1e-6)) / max(rad * rad * rad, 1e-6));\n" +
-                            "float centrifRatio = clamp(wCurr / max(wCrit, 1e-6), 0.0, 1.5), baseSnow = clamp((26.0 - tempC) / 72.0, 0.0, 1.0);\n" +
-                            "return clamp(baseSnow * (1.0 - centrifRatio * 0.35), 0.0, 1.0);\n" +
-                            "}\n" +
-                            "float stepStefanBoltzmann(float currTempC, float incomingRadT4, float areaToMassRatio, float greenhouseTau, float dt) {\n" +
-                            "float eqTempK = sqrt(sqrt(max(incomingRadT4 * (1.0 + greenhouseTau), 53.1441))), currTempK = clamp(currTempC + 273.15, 2.7, 40000.0);\n" +
-                            "float tNorm = currTempK * 0.001, eqNorm = eqTempK * 0.001;\n" +
-                            "float t4 = (tNorm * tNorm) * (tNorm * tNorm), eq4 = (eqNorm * eqNorm) * (eqNorm * eqNorm);\n" +
-                            "float phaseBuffer = (abs(currTempC) < 12.0 || abs(currTempC - 100.0) < 18.0) ? 0.45 : 1.0;\n" +
-                            "float dT = (eq4 - t4) * 38.0 * areaToMassRatio * phaseBuffer * abs(dt);\n" +
-                            "currTempK = (eqTempK > currTempK) ? min(eqTempK, currTempK + max(0.0, dT)) : max(eqTempK, currTempK + min(0.0, dT));\n" +
-                            "return currTempK - 273.15;\n" +
-                            "}\n" +
-                            "dvec3 calcAccelerationDouble(int ignoreIdx, dvec3 posI, dvec3 velI, double radI, double massI, int n, bool gravOn) {\n" +
-                            "if (!gravOn) return dvec3(0.0LF);\n" +
-                            "dvec3 acc = dvec3(0.0LF);\n" +
-                            "for (int j = 0; j < n; j++) {\n" +
-                            "if (j == ignoreIdx) continue;\n" +
-                            "dvec4 pmJ = sPlanetPosMassD[j]; double massJ = pmJ.w;\n" +
-                            "if (!(massJ > 0.0LF)) continue;\n" +
-                            "dvec4 vrJ = sPlanetVelRadD[j]; dvec3 d = pmJ.xyz - posI;\n" +
-                            "double distSq = max(dot(d, d), 1e-12LF), invDist = inversesqrt(distSq), dist = distSq * invDist;\n" +
-                            "double sumRad = max(radI, 0.01LF) + max(vrJ.w, 0.01LF), effDist = max(dist, max(sumRad * 0.65LF, 0.08LF)), invEff = 1.0LF / effDist;\n" +
-                            "dvec3 dir = d * invDist, vRel = velI - vrJ.xyz, vTang = vRel - dir * dot(vRel, dir);\n" +
-                            "double relFactor = 1.0LF + clamp(3.0LF * dot(vTang, vTang) / MAX_C_SQ_D, 0.0LF, 0.25LF) + clamp(TWO_G_OVER_C2_D * (massI + massJ) * invEff, 0.0LF, 0.20LF);\n" +
-                            "double baseG = (G_D * massJ * (invEff * invEff)) * relFactor;\n" +
-                            "acc += dir * baseG;\n" +
-                            "float packedJ = sTempType[j].z;\n" +
-                            "if (packedJ < 500.0 && sTempType[j].y < 0.5 && dist < vrJ.w * 8.0LF) {\n" +
-                            "float tiltRadJ = packedJ * DEG_TO_RAD_F;\n" +
-                            "dvec3 spinAxis = dvec3(double(-sin(tiltRadJ)), double(cos(tiltRadJ)), 0.0LF);\n" +
-                            "double sinLat = dot(-dir, spinAxis), rRatio2 = (vrJ.w * vrJ.w) * (invEff * invEff);\n" +
-                            "acc += (dir * (1.0LF - 5.0LF * sinLat * sinLat) + spinAxis * (2.0LF * sinLat)) * (baseG * 0.016LF * rRatio2);\n" +
-                            "}\n" +
-                            "}\n" +
-                            "return acc;\n" +
-                            "}\n" +
-                            "vec3 calcAccelerationSector(ivec3 secI, vec3 locI, vec3 velI, float radI, float massI, int n, bool gravOn) {\n" +
-                            "if (!gravOn || n <= 0) return vec3(0.0);\n" +
-                            "vec3 acc = vec3(0.0);\n" +
-                            "for (int j = 0; j < n; j++) {\n" +
-                            "vec4 lmJ = sLocalMass[j]; float massJ = lmJ.w;\n" +
-                            "if (!(massJ > 0.0)) continue;\n" +
-                            "vec3 d = sectorDelta(sSector[j].xyz, lmJ.xyz, secI, locI);\n" +
-                            "float distSq = max(dot(d, d), 1e-8), invDist = inversesqrt(distSq), dist = distSq * invDist;\n" +
-                            "float rJ = max(sVelRad[j].w, 0.01), sumRad = max(radI, 0.01) + rJ, effDist = max(dist, max(sumRad * 0.65, 0.08)), invEff = 1.0 / effDist;\n" +
-                            "vec3 dir = d * invDist, vRel = velI - sVelRad[j].xyz, vTang = fma(dir, vec3(-dot(vRel, dir)), vRel);\n" +
-                            "float relFactor = 1.0 + clamp(3.0 * dot(vTang, vTang) / MAX_C_SQ_F, 0.0, 0.25) + clamp(TWO_G_OVER_C2_F * (massI + massJ) * invEff, 0.0, 0.20);\n" +
-                            "float baseG = (G_F * massJ * (invEff * invEff)) * relFactor;\n" +
-                            "acc = fma(dir, vec3(baseG), acc);\n" +
-                            "float packedJ = sTempType[j].z;\n" +
-                            "if (packedJ < 500.0 && sTempType[j].y < 0.5 && dist < rJ * 6.0) {\n" +
-                            "float tiltRadJ = packedJ * DEG_TO_RAD_F;\n" +
-                            "vec3 spinAxis = vec3(-sin(tiltRadJ), cos(tiltRadJ), 0.0);\n" +
-                            "float sinLat = dot(-dir, spinAxis), rRatio2 = (rJ * rJ) * (invEff * invEff);\n" +
-                            "acc += (dir * (1.0 - 5.0 * sinLat * sinLat) + spinAxis * (2.0 * sinLat)) * (baseG * 0.016 * rRatio2);\n" +
-                            "}\n" +
-                            "}\n" +
-                            "return acc;\n" +
-                            "}\n" +
-                            "void main() {\n" +
-                            "uint localIdx = gl_LocalInvocationID.x;\n" +
-                            "int n = clamp(pc.planetCount, 0, 64);\n" +
-                            "bool gravOn = (pc.flags & 1) != 0, rocheOn = (pc.flags & 2) != 0, centrifOn = (pc.flags & 4) != 0, collOn = (pc.flags & 8) != 0;\n" +
-                            "int draggedIdx = (pc.flags >> 4) - 1;\n" +
-                            "if (int(localIdx) < n) {\n" +
-                            "dvec4 pm = pb.planets[localIdx].posAndMass, vr = pb.planets[localIdx].velAndRadius;\n" +
-                            "sPlanetPosMassD[localIdx] = pm; sPlanetVelRadD[localIdx] = dvec4(vr.xyz, max(vr.w, 0.01LF));\n" +
-                            "ivec3 sec; vec3 loc; worldDoubleToSector(pm.xyz, sec, loc);\n" +
-                            "sSector[localIdx] = ivec4(sec, 0); sLocalMass[localIdx] = vec4(loc, float(pm.w));\n" +
-                            "sVelRad[localIdx] = vec4(vec3(vr.xyz), max(float(vr.w), 0.01));\n" +
-                            "sTempType[localIdx] = vec4(float(pb.planets[localIdx].rotAndTemp.w), float(pb.planets[localIdx].stateAndShed.x), float(pb.planets[localIdx].stateAndShed.y), float(pb.planets[localIdx].rotAndTemp.x));\n" +
-                            "} else {\n" +
-                            "sPlanetPosMassD[localIdx] = dvec4(0.0LF); sPlanetVelRadD[localIdx] = dvec4(0.0LF, 0.0LF, 0.0LF, 1.0LF);\n" +
-                            "sSector[localIdx] = ivec4(0); sLocalMass[localIdx] = vec4(0.0); sVelRad[localIdx] = vec4(0,0,0,1); sTempType[localIdx] = vec4(0.0);\n" +
-                            "}\n" +
-                            "barrier();\n" +
-                            "double subDtD = pc.subDt, halfDtD = 0.5LF * subDtD, totalDtD = subDtD * double(pc.subSteps);\n" +
-                            "float totalDt = float(totalDtD), absTotalDt = abs(totalDt), dtRealF = float(pc.dtReal);\n" +
-                            "if (gl_WorkGroupID.x > 0u) {\n" +
-                            "uint dIdx = (gl_WorkGroupID.x - 1u) * 64u + localIdx;\n" +
-                            "bool validDeb = int(dIdx) < pc.debrisCount;\n" +
-                            "ivec4 secType = validDeb ? db.debris[dIdx].sectorAndType : ivec4(0);\n" +
-                            "vec4 locSize = validDeb ? db.debris[dIdx].localPosAndSize : vec4(0.0);\n" +
-                            "vec4 velStat = validDeb ? db.debris[dIdx].velAndStatus : vec4(0,0,0,-1);\n" +
-                            "vec4 mta = validDeb ? db.debris[dIdx].massTempAngle : vec4(0.0);\n" +
-                            "bool activeDeb = validDeb && (velStat.w > 0.0);\n" +
-                            "ivec3 dSec = secType.xyz; int isFrag = secType.w;\n" +
-                            "vec3 dLoc = locSize.xyz, dVel = velStat.xyz;\n" +
-                            "float dSize = max(locSize.w, 0.01), dMass = max(mta.x, 1e-7), dTemp = mta.y, dAngle = mta.z, graceTimer = max(0.0, mta.w - dtRealF);\n" +
-                            "int absorbedByPlanet = -1, dSteps = clamp(pc.subSteps, 1, 64);\n" +
-                            "float dDt = totalDt / float(dSteps), dHalfDt = 0.5 * dDt;\n" +
-                            "if (activeDeb) {\n" +
-                            "vec3 dAcc = calcAccelerationSector(dSec, dLoc, dVel, dSize, dMass, n, gravOn);\n" +
-                            "dVel = fma(dAcc, vec3(dHalfDt), dVel);\n" +
-                            "}\n" +
-                            "for (int s = 0; s < dSteps; s++) {\n" +
-                            "if (activeDeb) {\n" +
-                            "float spSq = dot(dVel, dVel); if (spSq > MAX_C_SQ_F) dVel *= (MAX_C_F * inversesqrt(spSq));\n" +
-                            "dLoc = fma(dVel, vec3(dDt), dLoc); normalizeSectorPos(dSec, dLoc);\n" +
-                            "if (collOn && graceTimer <= 0.0) {\n" +
-                            "for (int j = 0; j < n; j++) {\n" +
-                            "if (!(sLocalMass[j].w > 0.0)) continue;\n" +
-                            "vec3 toP = sectorDelta(sSector[j].xyz, sLocalMass[j].xyz, dSec, dLoc);\n" +
-                            "float distSq = max(dot(toP, toP), 1e-8), rJ = max(sVelRad[j].w, 0.01);\n" +
-                            "if (distSq < (rJ + dSize) * (rJ + dSize) * 2.5) {\n" +
-                            "float invD = inversesqrt(distSq), dist = distSq * invD, packedJ = sTempType[j].z;\n" +
-                            "float tiltRadJ = ((packedJ >= 500.0) ? (packedJ - 1000.0) : packedJ) * DEG_TO_RAD_F;\n" +
-                            "float rCubeJ = cubeSupportRadius(-toP * invD, rJ, tiltRadJ, sTempType[j].w * DEG_TO_RAD_F);\n" +
-                            "if (dist < rCubeJ + dSize * 0.45) { absorbedByPlanet = j; activeDeb = false; break; }\n" +
-                            "}\n" +
-                            "}\n" +
-                            "}\n" +
-                            "}\n" +
-                            "sDebSec[localIdx] = ivec4(dSec, activeDeb ? (isFrag != 0 ? 1 : 2) : 0);\n" +
-                            "sDebLocSize[localIdx] = vec4(dLoc, dSize); sDebVelMass[localIdx] = vec4(dVel, dMass);\n" +
-                            "barrier();\n" +
-                            "vec3 debGravAcc = vec3(0.0);\n" +
-                            "if (activeDeb) {\n" +
-                            "for (uint k = 0u; k < 64u; k++) {\n" +
-                            "int kState = sDebSec[k].w;\n" +
-                            "if (k == localIdx || kState == 0) continue;\n" +
-                            "if (abs(dSec.x - sDebSec[k].x) > 4 || abs(dSec.y - sDebSec[k].y) > 4 || abs(dSec.z - sDebSec[k].z) > 4) continue;\n" +
-                            "vec3 delta = sectorDelta(sDebSec[k].xyz, sDebLocSize[k].xyz, dSec, dLoc);\n" +
-                            "float otherSize = sDebLocSize[k].w, otherMass = max(sDebVelMass[k].w, 1e-7);\n" +
-                            "float minSep = (dSize + otherSize) * ((isFrag != 0 && kState == 1) ? 1.38 : 1.75);\n" +
-                            "float rawDistSq = max(dot(delta, delta), 1e-8);\n" +
-                            "if (gravOn) {\n" +
-                            "float effSq = max(rawDistSq, minSep * minSep * 0.65);\n" +
-                            "debGravAcc += delta * (inversesqrt(rawDistSq) * (G_F * otherMass * 6.0 / effSq));\n" +
-                            "}\n" +
-                            "if (collOn) {\n" +
-                            "vec3 relV = dVel - sDebVelMass[k].xyz;\n" +
-                            "float tSweep = clamp(-dot(delta, relV) / max(dot(relV, relV), 1e-6), 0.0, dDt);\n" +
-                            "vec3 closestDelta = delta - relV * tSweep;\n" +
-                            "if (dot(closestDelta, closestDelta) < minSep * minSep) {\n" +
-                            "float dist = sqrt(rawDistSq);\n" +
-                            "vec3 nDir = delta / max(dist, 1e-5);\n" +
-                            "float approach = dot(relV, nDir);\n" +
-                            "if (approach > 0.0) {\n" +
-                            "float mShare = otherMass / (dMass + otherMass);\n" +
-                            "float restitution = (isFrag != 0 && kState == 1) ? 1.58 : 1.12;\n" +
-                            "dVel -= nDir * (restitution * approach * mShare);\n" +
-                            "dTemp = min(8500.0, dTemp + approach * approach * 28.0 * mShare);\n" +
-                            "dAngle = mod(dAngle + approach * 24.0, 360.0);\n" +
-                            "}\n" +
-                            "if (dist < minSep) { dLoc -= nDir * ((minSep - dist) * 0.52); normalizeSectorPos(dSec, dLoc); }\n" +
-                            "}\n" +
-                            "}\n" +
-                            "}\n" +
-                            "}\n" +
-                            "barrier();\n" +
-                            "if (activeDeb) {\n" +
-                            "vec3 nextAcc = calcAccelerationSector(dSec, dLoc, dVel, dSize, dMass, n, gravOn) + debGravAcc;\n" +
-                            "dVel = fma(nextAcc, vec3((s + 1 < dSteps) ? dDt : dHalfDt), dVel);\n" +
-                            "}\n" +
-                            "}\n" +
-                            "if (!validDeb) return;\n" +
-                            "if (absorbedByPlanet >= 0) {\n" +
-                            "db.debris[dIdx].sectorAndType = ivec4(dSec, isFrag); db.debris[dIdx].localPosAndSize = vec4(dLoc, dSize);\n" +
-                            "db.debris[dIdx].velAndStatus = vec4(dVel, -10.0 - float(absorbedByPlanet)); db.debris[dIdx].massTempAngle = vec4(dMass, dTemp, dAngle, 0.0);\n" +
-                            "return;\n" +
-                            "}\n" +
-                            "if (!activeDeb) return;\n" +
-                            "float fragSnow = calcSnowCoverage(dTemp, dSize, dMass, 6.0, isFrag != 0);\n" +
-                            "float absorb = 1.0 - ((isFrag != 0) ? mix(0.14, 0.82, fragSnow) : 0.38), radFluxT4 = 53.1441;\n" +
-                            "for (int j = 0; j < n; j++) {\n" +
-                            "if (!(sLocalMass[j].w > 0.0)) continue;\n" +
-                            "vec3 toP = sectorDelta(sSector[j].xyz, sLocalMass[j].xyz, dSec, dLoc);\n" +
-                            "float dist = max(length(toP), 0.01), rJ = max(sVelRad[j].w, 0.01), tJK = clamp(sTempType[j].x + 273.15, 2.7, 40000.0);\n" +
-                            "if (tJK > 150.0) { float geom = (rJ * 0.72) / max(dist, rJ), t2 = tJK * tJK; radFluxT4 += (t2 * t2) * (geom * geom) * absorb; }\n" +
-                            "if (sTempType[j].y > 1.5 && dist < rJ * 12.0) dTemp = max(dTemp, 1200.0 + 3800.0 * (rJ * 4.0 / max(dist, rJ)));\n" +
-                            "}\n" +
-                            "if (isFrag != 0) dAngle = mod(dAngle + 28.0 * (totalDt / 3600.0), 360.0);\n" +
-                            "dTemp = stepStefanBoltzmann(dTemp, radFluxT4, clamp((dSize * dSize) / max(dMass * 60.0, 1e-6), 0.05, 18.0), 0.0, absTotalDt);\n" +
-                            "db.debris[dIdx].sectorAndType = ivec4(dSec, isFrag); db.debris[dIdx].localPosAndSize = vec4(dLoc, dSize);\n" +
-                            "db.debris[dIdx].velAndStatus = vec4(dVel, 1000000.0); db.debris[dIdx].massTempAngle = vec4(dMass, dTemp, dAngle, graceTimer);\n" +
-                            "return;\n" +
-                            "}\n" +
-                            "uint idx = localIdx;\n" +
-                            "bool isValid = int(idx) < n, isDragged = isValid && (int(idx) == draggedIdx);\n" +
-                            "dvec3 posD = sPlanetPosMassD[idx].xyz; double massD = sPlanetPosMassD[idx].w;\n" +
-                            "dvec3 velD = isDragged ? dvec3(0.0LF) : sPlanetVelRadD[idx].xyz; double radD = max(sPlanetVelRadD[idx].w, 0.01LF);\n" +
-                            "double angle = isValid ? pb.planets[idx].rotAndTemp.x : 0.0LF, rotPeriod = isValid ? pb.planets[idx].rotAndTemp.y : 24.0LF;\n" +
-                            "double targetRad = isValid ? max(pb.planets[idx].rotAndTemp.z, 0.01LF) : radD;\n" +
-                            "float tempC = sTempType[idx].x, objType = sTempType[idx].y, packedRT = sTempType[idx].z;\n" +
-                            "bool isRigid = (packedRT >= 500.0); float tiltRad = (isRigid ? (packedRT - 1000.0) : packedRT) * DEG_TO_RAD_F;\n" +
-                            "float bondAlbedo = isValid ? clamp(float(pb.planets[idx].stateAndShed.z), 0.0, 0.95) : 0.3;\n" +
-                            "double totalShedMass = 0.0LF, eventCode = -1.0LF;\n" +
-                            "dvec3 accD = (isValid && !isDragged && massD > 0.0LF) ? calcAccelerationDouble(int(idx), posD, velD, radD, massD, n, gravOn) : dvec3(0.0LF);\n" +
-                            "if (isValid && !isDragged && massD > 0.0LF) velD += accD * halfDtD;\n" +
-                            "for (int step = 0; step < pc.subSteps; step++) {\n" +
-                            "if (isValid && !isDragged && massD > 0.0LF) {\n" +
-                            "double spSq = dot(velD, velD); if (spSq > MAX_C_SQ_D) velD *= (MAX_C_D * inversesqrt(spSq));\n" +
-                            "posD += velD * subDtD;\n" +
-                            "}\n" +
-                            "sPlanetPosMassD[idx] = dvec4(posD, massD); sPlanetVelRadD[idx] = dvec4(velD, radD);\n" +
-                            "barrier();\n" +
-                            "dvec3 newAccD = (isValid && !isDragged && massD > 0.0LF) ? calcAccelerationDouble(int(idx), posD, velD, radD, massD, n, gravOn) : dvec3(0.0LF);\n" +
-                            "if (isValid && !isDragged && massD > 0.0LF) {\n" +
-                            "velD += newAccD * ((step + 1 < pc.subSteps) ? subDtD : halfDtD);\n" +
-                            "double spSq2 = dot(velD, velD); if (spSq2 > MAX_C_SQ_D) velD *= (MAX_C_D * inversesqrt(spSq2));\n" +
-                            "accD = newAccD;\n" +
-                            "}\n" +
-                            "barrier();\n" +
-                            "}\n" +
-                            "ivec3 sec; vec3 loc; worldDoubleToSector(posD, sec, loc);\n" +
-                            "float mass = float(massD), rad = float(radD); vec3 vel = vec3(velD);\n" +
-                            "sSector[idx] = ivec4(sec, 0); sLocalMass[idx] = vec4(loc, mass); sVelRad[idx] = vec4(vel, rad);\n" +
-                            "float snowFrac = calcSnowCoverage(tempC, rad, mass, float(rotPeriod), isRigid && objType < 0.5);\n" +
-                            "float effAlbedo = (objType < 0.5) ? clamp(mix(bondAlbedo, 0.86, snowFrac * 0.85), 0.05, 0.94) : 0.0;\n" +
-                            "float tempSelfK = clamp(tempC + 273.15, 2.7, 40000.0), tSelf2 = tempSelfK * tempSelfK;\n" +
-                            "sRadiosityPass1[idx] = vec4(tSelf2 * tSelf2, 0.0, effAlbedo, float(rotPeriod));\n" +
-                            "barrier();\n" +
-                            "float pass1IncomingT4 = 0.0;\n" +
-                            "if (isValid && mass > 0.0) {\n" +
-                            "for (int j = 0; j < n; j++) {\n" +
-                            "if (uint(j) == idx || !(sLocalMass[j].w > 0.0)) continue;\n" +
-                            "vec3 dVec = vec3(sPlanetPosMassD[j].xyz - posD);\n" +
-                            "float dist = max(length(dVec), 1e-4), radJ = max(sVelRad[j].w, 0.01), geom = (radJ * 0.72) / max(dist, radJ);\n" +
-                            "pass1IncomingT4 += sRadiosityPass1[j].x * (geom * geom);\n" +
-                            "}\n" +
-                            "}\n" +
-                            "sRadiosityPass1[idx].y = pass1IncomingT4 * (effAlbedo * 0.65 + (1.0 - effAlbedo) * 0.35);\n" +
-                            "barrier();\n" +
-                            "if (isValid && mass > 0.0) {\n" +
-                            "if (abs(rotPeriod) > 0.0001LF) angle = mod(angle + (360.0LF / (rotPeriod * 3600.0LF)) * totalDtD, 360.0LF);\n" +
-                            "if (abs(radD - targetRad) > 0.0001LF) { radD = max(0.01LF, radD + (targetRad - radD) * min(1.0LF, 12.0LF * abs(totalDtD))); rad = float(radD); }\n" +
-                            "if (centrifOn && objType < 1.5) {\n" +
-                            "double signRot = (rotPeriod < 0.0LF) ? -1.0LF : 1.0LF, safeRot = max(0.0001LF, abs(rotPeriod));\n" +
-                            "float wCurr = float((2.0LF * double(PI_F)) / (safeRot * 3600.0LF)), wCrit = sqrt((G_F * mass) / max(rad * rad * rad, 1e-6));\n" +
-                            "if (wCurr > wCrit) {\n" +
-                            "float excess = min((wCurr - wCrit) / max(wCrit, 1e-6), 2.0);\n" +
-                            "rotPeriod = signRot * safeRot * (1.0LF + double(excess * 0.85 * absTotalDt));\n" +
-                            "float shed = min(mass * 0.15, mass * 0.35 * absTotalDt * excess);\n" +
-                            "if (shed > 1e-6 && (mass - shed) > 1e-6) {\n" +
-                            "float oldMass = mass; mass -= shed; massD = double(mass); totalShedMass += double(shed);\n" +
-                            "targetRad = max(0.02LF, targetRad * double(cbrtFast(mass / oldMass))); radD = targetRad; rad = float(radD);\n" +
-                            "tempC += excess * 120.0 * absTotalDt;\n" +
-                            "}\n" +
-                            "}\n" +
-                            "}\n" +
-                            "float incomingRadT4 = 53.1441, rhoSelf = mass / max((4.0 / 3.0) * PI_F * rad * rad * rad, 1e-6);\n" +
-                            "float rotRadSelf = float(angle) * DEG_TO_RAD_F, absorptionFactor = 1.0 - effAlbedo;\n" +
-                            "for (int j = 0; j < n; j++) {\n" +
-                            "if (uint(j) == idx || !(mass > 0.0)) continue;\n" +
-                            "float massJ = sLocalMass[j].w; if (!(massJ > 0.0)) continue;\n" +
-                            "vec3 velJ = sVelRad[j].xyz;\n" +
-                            "float radJ = max(sVelRad[j].w, 0.01), tempJC = sTempType[j].x, typeJ = sTempType[j].y, packedJ = sTempType[j].z;\n" +
-                            "float tiltRadJ = ((packedJ >= 500.0) ? (packedJ - 1000.0) : packedJ) * DEG_TO_RAD_F;\n" +
-                            "vec3 dVec = vec3(sPlanetPosMassD[j].xyz - posD);\n" +
-                            "float distSq = max(dot(dVec, dVec), 1e-10), invDist = inversesqrt(distSq), dist = distSq * invDist;\n" +
-                            "vec3 unitDir = dVec * invDist;\n" +
-                            "float sumCubeRad = cubeSupportRadius(unitDir, rad, tiltRad, rotRadSelf) + cubeSupportRadius(-unitDir, radJ, tiltRadJ, sTempType[j].w * DEG_TO_RAD_F);\n" +
-                            "vec4 radJData = sRadiosityPass1[j]; float geom = (radJ * 0.72) / max(dist, radJ);\n" +
-                            "incomingRadT4 += (radJData.x + radJData.y * 0.65) * (geom * geom) * absorptionFactor;\n" +
-                            "if (collOn && dist < sumCubeRad) {\n" +
-                            "bool selfBigger = (rad > radJ * 1.0001) || (abs(rad - radJ) <= rad * 0.0001 && mass > massJ) || (abs(rad - radJ) <= rad * 0.0001 && mass == massJ && idx < uint(j));\n" +
-                            "float smallMass = selfBigger ? massJ : mass, smallRad = selfBigger ? radJ : rad, bigRad = selfBigger ? rad : radJ;\n" +
-                            "float overlap = max(0.0, sumCubeRad - dist), penDepth = clamp(overlap / max(smallRad * 2.0, 0.02), 0.05, 1.0);\n" +
-                            "float mergeStep = clamp(absTotalDt * (0.85 + penDepth * 2.8), 0.015, 0.38), transfer = min(smallMass, smallMass * mergeStep);\n" +
-                            "float relSpeedSq = dot(vel - velJ, vel - velJ);\n" +
-                            "if (selfBigger) {\n" +
-                            "float splashFrac = (!isRigid) ? 0.28 : ((tempC < -15.0) ? 0.22 : 0.12);\n" +
-                            "float splashMass = transfer * splashFrac, absorbedMass = transfer - splashMass;\n" +
-                            "double newMassD = massD + double(absorbedMass);\n" +
-                            "if (!isDragged) { velD = (velD * massD + sPlanetVelRadD[j].xyz * double(absorbedMass)) / max(newMassD, 1e-9LF); vel = vec3(velD); }\n" +
-                            "if (objType < 1.5) {\n" +
-                            "float massRatio = transfer / max(float(newMassD), 1e-9);\n" +
-                            "tempC = min(35000.0, tempC + (max(0.0, tempJC - tempC) + 520.0 + relSpeedSq * 75.0) * massRatio);\n" +
-                            "totalShedMass += double(splashMass);\n" +
-                            "}\n" +
-                            "massD = newMassD; mass = float(massD);\n" +
-                            "float volGain = (smallRad * smallRad * smallRad) * (absorbedMass / max(smallMass, 1e-9));\n" +
-                            "targetRad = max(0.02LF, double(cbrtFast(float(targetRad * targetRad * targetRad) + volGain)));\n" +
-                            "radD = max(radD, targetRad); rad = float(radD); eventCode = double(200 + j);\n" +
-                            "} else {\n" +
-                            "float oldM = mass; mass -= transfer; massD = double(max(0.0, mass));\n" +
-                            "if (!isDragged) {\n" +
-                            "velD = mix(velD, sPlanetVelRadD[j].xyz, double(clamp(mergeStep * 1.65, 0.05, 0.85))); vel = vec3(velD);\n" +
-                            "posD += dvec3(unitDir) * double(min(overlap * 0.35, smallRad * 0.4) * mergeStep);\n" +
-                            "}\n" +
-                            "if (objType < 1.5) {\n" +
-                            "totalShedMass += double(transfer * 0.24);\n" +
-                            "tempC = min(35000.0, tempC + (420.0 + relSpeedSq * 24.0) * (transfer / max(oldM, 1e-9)));\n" +
-                            "}\n" +
-                            "eventCode = double(j);\n" +
-                            "if (mass <= 1e-5 || rad < bigRad * 0.08 || dist < bigRad * 0.55) {\n" +
-                            "mass = 0.0; massD = 0.0LF; rad = 0.01; radD = 0.01LF; targetRad = 0.01LF;\n" +
-                            "} else {\n" +
-                            "targetRad = max(0.02LF, targetRad * double(cbrtFast(mass / max(oldM, 1e-9)))); radD = targetRad; rad = float(radD);\n" +
-                            "}\n" +
-                            "}\n" +
-                            "}\n" +
-                            "if (rocheOn && objType < 1.5 && mass > 1e-6 && radJ > rad * 1.35 && massJ > mass * 2.0) {\n" +
-                            "float rhoJ = massJ / max((4.0 / 3.0) * PI_F * radJ * radJ * radJ, 1e-6);\n" +
-                            "if (rhoSelf > 0.0 && rhoJ > 0.0) {\n" +
-                            "float rocheLimit = (isRigid ? 1.44 : 2.456) * radJ * cbrtFast(rhoJ / rhoSelf);\n" +
-                            "if (typeJ > 1.5) rocheLimit = max(rocheLimit * 0.35, radJ * 8.5);\n" +
-                            "if (dist < rocheLimit && dist > sumCubeRad) {\n" +
-                            "float depth = clamp(1.0 - (dist / max(rocheLimit, 1e-4)), 0.0, 1.0);\n" +
-                            "float shed = min(mass * 0.25, mass * ((typeJ > 1.5) ? (0.35 + depth * 2.2) : (0.1 + depth * 0.9)) * absTotalDt);\n" +
-                            "if (shed > 1e-6) {\n" +
-                            "float oldM = mass;\n" +
-                            "if (mass - shed <= 1e-6) { totalShedMass += double(mass); mass = 0.0; massD = 0.0LF; rad = 0.01; radD = 0.01LF; targetRad = 0.01LF; }\n" +
-                            "else { mass -= shed; massD = double(mass); totalShedMass += double(shed); targetRad = max(0.02LF, targetRad * double(cbrtFast(mass / oldM))); radD = targetRad; rad = float(radD); }\n" +
-                            "eventCode = double(j + (typeJ > 1.5 ? 100 : 0));\n" +
-                            "tempC = min(35000.0, tempC + ((typeJ > 1.5 ? 1800.0 : 450.0) + depth * 3200.0) * absTotalDt);\n" +
-                            "}\n" +
-                            "}\n" +
-                            "}\n" +
-                            "}\n" +
-                            "}\n" +
-                            "if (objType < 1.5 && mass > 0.0) {\n" +
-                            "float areaToMass = clamp((rad * rad) / max(mass * (isRigid ? 14.0 : 28.0), 1e-4), 0.001, 2.5);\n" +
-                            "float steamGH = (objType < 0.5 && isRigid) ? (0.35 * clamp((tempC - 35.0) / 90.0, 0.0, 1.0) * clamp((260.0 - tempC) / 90.0, 0.0, 1.0)) : 0.0;\n" +
-                            "float so2GH = (objType < 0.5 && bondAlbedo > 0.68 && bondAlbedo < 0.78) ? 1.85 : ((objType < 0.5 && bondAlbedo > 0.23 && bondAlbedo < 0.255) ? 0.08 : 0.0);\n" +
-                            "if (objType < 0.5 || sqrt(sqrt(incomingRadT4)) > (tempC + 273.15)) {\n" +
-                            "tempC = stepStefanBoltzmann(tempC, incomingRadT4, areaToMass, steamGH + so2GH, absTotalDt);\n" +
-                            "}\n" +
-                            "}\n" +
-                            "if (isnan(posD.x) || isinf(posD.x) || isnan(velD.x) || isinf(velD.x) || isnan(rad) || isinf(rad)) {\n" +
-                            "massD = 0.0LF; radD = 0.01LF; targetRad = 0.01LF; velD = dvec3(0.0LF);\n" +
-                            "}\n" +
-                            "}\n" +
-                            "if (isValid) {\n" +
-                            "pb.planets[idx].posAndMass = dvec4(posD, massD); pb.planets[idx].velAndRadius = dvec4(velD, radD);\n" +
-                            "pb.planets[idx].rotAndTemp = dvec4(angle, rotPeriod, targetRad, double(tempC));\n" +
-                            "pb.planets[idx].stateAndShed = dvec4(double(objType), double(packedRT), totalShedMass, eventCode);\n" +
-                            "}\n" +
-                            "}\n";
+            String glsl = new StringBuilder(32768)
+                    .append(buildPhysicsGlslPart1())
+                    .append(buildPhysicsGlslPart2())
+                    .append(buildPhysicsGlslPart3())
+                    .append(buildPhysicsGlslPart4())
+                    .append(buildPhysicsGlslPart5())
+                    .toString();
 
             long compiler = Shaderc.shaderc_compiler_initialize();
-            long res = Shaderc.shaderc_compile_into_spv(compiler, glsl, Shaderc.shaderc_glsl_compute_shader, "physics_sector.comp", "main", 0);
+            long options = Shaderc.shaderc_compile_options_initialize();
+            Shaderc.shaderc_compile_options_set_optimization_level(options, Shaderc.shaderc_optimization_level_performance);
+            Shaderc.shaderc_compile_options_set_target_env(options, Shaderc.shaderc_target_env_vulkan, Shaderc.shaderc_env_version_vulkan_1_3);
+
+            long res = Shaderc.shaderc_compile_into_spv(compiler, glsl, Shaderc.shaderc_glsl_compute_shader, "physics_sector.comp", "main", options);
             if (Shaderc.shaderc_result_get_compilation_status(res) != Shaderc.shaderc_compilation_status_success) {
                 System.err.println("[SBox Physics] Ошибка компиляции шейдера:\n" + Shaderc.shaderc_result_get_error_message(res));
-                Shaderc.shaderc_result_release(res); Shaderc.shaderc_compiler_release(compiler); return;
+                Shaderc.shaderc_result_release(res);
+                Shaderc.shaderc_compile_options_release(options);
+                Shaderc.shaderc_compiler_release(compiler);
+                return;
             }
             ByteBuffer spirv = Shaderc.shaderc_result_get_bytes(res);
 
@@ -656,6 +888,7 @@ public class PhysicsEngine {
             long shaderModule = pShaderModule.get(0);
 
             Shaderc.shaderc_result_release(res);
+            Shaderc.shaderc_compile_options_release(options);
             Shaderc.shaderc_compiler_release(compiler);
 
             int cachedCoherentFlags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT | VK_MEMORY_PROPERTY_HOST_CACHED_BIT;
@@ -794,6 +1027,27 @@ public class PhysicsEngine {
         }
     }
 
+    private static int computeAdaptiveSubSteps(double dtSim, boolean realistic, int prec) {
+        if (!realistic) {
+            return (int) Math.max(1, Math.min(24, Math.ceil(Math.abs(dtSim) / 48.0)));
+        }
+        double maxVelOverR = 0.0;
+        List<SpaceEngine.Planet> pl = SpaceEngine.planets;
+        for (int i = 0, sz = pl.size(); i < sz; i++) {
+            SpaceEngine.Planet p = pl.get(i);
+            if (p != null && p.mass > 0.0) {
+                double v = p.vel.length();
+                double r = Math.max(0.25, p.radius);
+                maxVelOverR = Math.max(maxVelOverR, v / r);
+            }
+        }
+        double displacementRatio = maxVelOverR * Math.abs(dtSim);
+        int maxSteps = (prec == 0) ? 48 : (prec == 1 ? 96 : 160);
+        int minSteps = (prec == 0) ? 2 : (prec == 1 ? 4 : 6);
+        int needed = (int) Math.ceil(Math.max(Math.abs(dtSim) / 24.0, displacementRatio * 2.5));
+        return Math.max(minSteps, Math.min(maxSteps, needed));
+    }
+
     public static void tick(double dtReal) {
         ensureSaturnRings(SpaceEngine.planets);
         updateDraggedPlanetPosition();
@@ -801,11 +1055,17 @@ public class PhysicsEngine {
         if (!SpaceEngine.isPaused && SpaceEngine.physicsEnabled) {
             long tickStart = System.nanoTime();
             double dtSim = dtReal * SpaceEngine.timeScale;
-            int totalSubSteps = (int) Math.max(8, Math.min(1024, Math.ceil(Math.abs(dtSim) / 6.0)));
+            boolean realistic = (SpaceEngine.physicsSimMode == 1);
+            int prec = SBoxVulkanCore.supportsFp64 ? SpaceEngine.physicsPrecisionMode : 0;
+
+            int totalSubSteps = computeAdaptiveSubSteps(dtSim, realistic, prec);
+            SpaceEngine.lastPhysicsSubSteps = totalSubSteps;
             double subDt = dtSim / totalSubSteps;
 
             runGpuPhysicsStep(subDt, dtReal, totalSubSteps, dtSim);
-            stepCrossGroupDebrisInteractions();
+            if (realistic && (SpaceEngine.fragments.size() > 1 || SpaceEngine.particles.size() > 1)) {
+                stepCrossGroupDebrisInteractions();
+            }
             updateDraggedPlanetPosition();
             stepCratersThermodynamics(SpaceEngine.planets, dtSim, dtReal);
 
@@ -841,27 +1101,22 @@ public class PhysicsEngine {
                 HASH_NEXT[i] = HASH_HEAD[b];
                 HASH_HEAD[b] = i;
             }
-
             for (int i = 0; i < fSize; i++) {
                 SpaceEngine.Fragment a = fragments.get(i);
                 if (a == null || a.life <= 0.0) continue;
                 int b = spatialHash(a.pos.x, a.pos.y, a.pos.z, invCell);
                 int j = HASH_HEAD[b], checks = 0;
-                while (j != -1 && checks < 20) {
+                while (j != -1 && checks < 14) {
                     if (j > i) {
                         SpaceEngine.Fragment c = fragments.get(j);
                         if (c != null && c.life > 0.0) {
                             double dx = c.pos.x - a.pos.x, dy = c.pos.y - a.pos.y, dz = c.pos.z - a.pos.z;
-                            double minSep = (a.size + c.size) * 1.42;
-                            double distSq = dx * dx + dy * dy + dz * dz;
+                            double minSep = (a.size + c.size) * 1.42, distSq = dx * dx + dy * dy + dz * dz;
                             if (distSq > 1e-10 && distSq < minSep * minSep) {
-                                double dist = Math.sqrt(distSq);
-                                double nx = dx / dist, ny = dy / dist, nz = dz / dist;
+                                double dist = Math.sqrt(distSq), nx = dx / dist, ny = dy / dist, nz = dz / dist;
                                 double rvx = a.vel.x - c.vel.x, rvy = a.vel.y - c.vel.y, rvz = a.vel.z - c.vel.z;
-                                double approach = rvx * nx + rvy * ny + rvz * nz;
-                                double relSpeedSq = rvx * rvx + rvy * rvy + rvz * rvz;
-                                double totM = Math.max(1e-9, a.mass + c.mass);
-                                double escSq = (2.0 * G * totM) / Math.max(minSep, 0.02);
+                                double approach = rvx * nx + rvy * ny + rvz * nz, relSpeedSq = rvx * rvx + rvy * rvy + rvz * rvz;
+                                double totM = Math.max(1e-9, a.mass + c.mass), escSq = (2.0 * G * totM) / Math.max(minSep, 0.02);
 
                                 if (relSpeedSq < escSq && Math.cbrt(a.size * a.size * a.size + c.size * c.size * c.size) < 1.8) {
                                     a.vel.x = (a.vel.x * a.mass + c.vel.x * c.mass) / totM;
@@ -872,8 +1127,7 @@ public class PhysicsEngine {
                                     a.pos.z = (a.pos.z * a.mass + c.pos.z * c.mass) / totM;
                                     a.size = Math.cbrt(a.size * a.size * a.size + c.size * c.size * c.size);
                                     a.temperature = Math.min(8500.0, (a.temperature * a.mass + c.temperature * c.mass) / totM + relSpeedSq * 18.0);
-                                    a.mass = totM;
-                                    c.life = -1.0;
+                                    a.mass = totM; c.life = -1.0;
                                 } else if (approach > 0.0) {
                                     double imp = 1.55 * approach / totM;
                                     a.vel.x -= nx * imp * c.mass; a.vel.y -= ny * imp * c.mass; a.vel.z -= nz * imp * c.mass;
@@ -888,14 +1142,10 @@ public class PhysicsEngine {
                             }
                         }
                     }
-                    j = HASH_NEXT[j];
-                    checks++;
+                    j = HASH_NEXT[j]; checks++;
                 }
             }
-            for (int i = fragments.size() - 1; i >= 0; i--) {
-                SpaceEngine.Fragment f = fragments.get(i);
-                if (f == null || f.life <= 0.0) fragments.remove(i);
-            }
+            compactFragments(fragments);
         }
 
         int pSize = Math.min(particles.size(), MAX_GPU_DEBRIS);
@@ -909,27 +1159,22 @@ public class PhysicsEngine {
                 HASH_NEXT[i] = HASH_HEAD[b];
                 HASH_HEAD[b] = i;
             }
-
             for (int i = 0; i < pSize; i++) {
                 SpaceEngine.Particle a = particles.get(i);
                 if (a == null || a.life <= 0.0) continue;
                 int b = spatialHash(a.pos.x, a.pos.y, a.pos.z, invGasCell);
                 int j = HASH_HEAD[b], checks = 0;
-                while (j != -1 && checks < 20) {
+                while (j != -1 && checks < 14) {
                     if (j > i) {
                         SpaceEngine.Particle c = particles.get(j);
                         if (c != null && c.life > 0.0) {
                             double dx = c.pos.x - a.pos.x, dy = c.pos.y - a.pos.y, dz = c.pos.z - a.pos.z;
-                            double minSep = (a.size + c.size) * 1.65;
-                            double distSq = dx * dx + dy * dy + dz * dz;
+                            double minSep = (a.size + c.size) * 1.65, distSq = dx * dx + dy * dy + dz * dz;
                             if (distSq > 1e-10 && distSq < minSep * minSep) {
-                                double dist = Math.sqrt(distSq);
-                                double nx = dx / dist, ny = dy / dist, nz = dz / dist;
+                                double dist = Math.sqrt(distSq), nx = dx / dist, ny = dy / dist, nz = dz / dist;
                                 double rvx = a.vel.x - c.vel.x, rvy = a.vel.y - c.vel.y, rvz = a.vel.z - c.vel.z;
-                                double approach = rvx * nx + rvy * ny + rvz * nz;
-                                double relSpeedSq = rvx * rvx + rvy * rvy + rvz * rvz;
-                                double totM = Math.max(1e-9, a.mass + c.mass);
-                                double escSq = (2.2 * G * totM) / Math.max(minSep, 0.05);
+                                double approach = rvx * nx + rvy * ny + rvz * nz, relSpeedSq = rvx * rvx + rvy * rvy + rvz * rvz;
+                                double totM = Math.max(1e-9, a.mass + c.mass), escSq = (2.2 * G * totM) / Math.max(minSep, 0.05);
 
                                 if (relSpeedSq < escSq && Math.cbrt(a.size * a.size * a.size + c.size * c.size * c.size) < 3.2) {
                                     a.vel.x = (a.vel.x * a.mass + c.vel.x * c.mass) / totM;
@@ -943,8 +1188,7 @@ public class PhysicsEngine {
                                     a.b = (int) Math.round((a.b * a.mass + c.b * c.mass) / totM);
                                     a.size = Math.cbrt(a.size * a.size * a.size + c.size * c.size * c.size);
                                     a.temperature = Math.min(12000.0, (a.temperature * a.mass + c.temperature * c.mass) / totM + relSpeedSq * 14.0);
-                                    a.mass = totM;
-                                    c.life = -1.0;
+                                    a.mass = totM; c.life = -1.0;
                                 } else if (approach > 0.0) {
                                     double imp = 1.15 * approach / totM;
                                     a.vel.x -= nx * imp * c.mass; a.vel.y -= ny * imp * c.mass; a.vel.z -= nz * imp * c.mass;
@@ -953,14 +1197,10 @@ public class PhysicsEngine {
                             }
                         }
                     }
-                    j = HASH_NEXT[j];
-                    checks++;
+                    j = HASH_NEXT[j]; checks++;
                 }
             }
-            for (int i = particles.size() - 1; i >= 0; i--) {
-                SpaceEngine.Particle pt = particles.get(i);
-                if (pt == null || pt.life <= 0.0) particles.remove(i);
-            }
+            compactParticles(particles);
         }
     }
 
@@ -976,18 +1216,26 @@ public class PhysicsEngine {
 
         int maxDebrisLimit = Math.min(MAX_GPU_DEBRIS, getEffectiveDebrisLimit());
         int maxPerType = maxDebrisLimit / 2;
-        while (fragments.size() > maxPerType) {
-            SpaceEngine.Fragment removed = fragments.remove(fragments.size() - 1);
-            if (removed != null) removed.life = -1.0;
+        if (fragments.size() > maxPerType) {
+            for (int i = maxPerType, sz = fragments.size(); i < sz; i++) {
+                SpaceEngine.Fragment removed = fragments.get(i);
+                if (removed != null) removed.life = -1.0;
+            }
+            fragments.subList(maxPerType, fragments.size()).clear();
         }
-        while (particles.size() > maxDebrisLimit - fragments.size()) {
-            SpaceEngine.Particle removed = particles.remove(particles.size() - 1);
-            if (removed != null) removed.life = -1.0;
+        int maxPartAllowed = maxDebrisLimit - fragments.size();
+        if (particles.size() > maxPartAllowed) {
+            for (int i = maxPartAllowed, sz = particles.size(); i < sz; i++) {
+                SpaceEngine.Particle removed = particles.get(i);
+                if (removed != null) removed.life = -1.0;
+            }
+            particles.subList(maxPartAllowed, particles.size()).clear();
         }
 
-        double refOriginX = Math.floor(CameraManager.pos.x / SECTOR_SIZE) * SECTOR_SIZE;
-        double refOriginY = Math.floor(CameraManager.pos.y / SECTOR_SIZE) * SECTOR_SIZE;
-        double refOriginZ = Math.floor(CameraManager.pos.z / SECTOR_SIZE) * SECTOR_SIZE;
+        int precMode = SBoxVulkanCore.supportsFp64 ? SpaceEngine.physicsPrecisionMode : 0;
+        double refOriginX = (precMode == 2) ? (Math.floor(CameraManager.pos.x / SECTOR_SIZE) * SECTOR_SIZE) : 0.0;
+        double refOriginY = (precMode == 2) ? (Math.floor(CameraManager.pos.y / SECTOR_SIZE) * SECTOR_SIZE) : 0.0;
+        double refOriginZ = (precMode == 2) ? (Math.floor(CameraManager.pos.z / SECTOR_SIZE) * SECTOR_SIZE) : 0.0;
 
         int draggedIndex = -1;
         for (int i = 0; i < pSize; i++) {
@@ -997,15 +1245,27 @@ public class PhysicsEngine {
             PREV_VEL_X[i] = p.vel.x; PREV_VEL_Y[i] = p.vel.y; PREV_VEL_Z[i] = p.vel.z;
 
             int base = i * GPU_PLANET_STRIDE;
-            mappedPlanetBuffer.putDouble(base,      p.pos.x - refOriginX);
-            mappedPlanetBuffer.putDouble(base + 8,  p.pos.y - refOriginY);
-            mappedPlanetBuffer.putDouble(base + 16, p.pos.z - refOriginZ);
-            mappedPlanetBuffer.putDouble(base + 24, p.mass);
+            if (precMode == 0) {
+                mappedPlanetBuffer.putDouble(base,      (double) (float) p.pos.x);
+                mappedPlanetBuffer.putDouble(base + 8,  (double) (float) p.pos.y);
+                mappedPlanetBuffer.putDouble(base + 16, (double) (float) p.pos.z);
+                mappedPlanetBuffer.putDouble(base + 24, (double) (float) p.mass);
 
-            mappedPlanetBuffer.putDouble(base + 32, p.vel.x);
-            mappedPlanetBuffer.putDouble(base + 40, p.vel.y);
-            mappedPlanetBuffer.putDouble(base + 48, p.vel.z);
-            mappedPlanetBuffer.putDouble(base + 56, Math.max(0.01, p.radius));
+                mappedPlanetBuffer.putDouble(base + 32, (double) (float) p.vel.x);
+                mappedPlanetBuffer.putDouble(base + 40, (double) (float) p.vel.y);
+                mappedPlanetBuffer.putDouble(base + 48, (double) (float) p.vel.z);
+                mappedPlanetBuffer.putDouble(base + 56, (double) Math.max(0.01f, (float) p.radius));
+            } else {
+                mappedPlanetBuffer.putDouble(base,      p.pos.x - refOriginX);
+                mappedPlanetBuffer.putDouble(base + 8,  p.pos.y - refOriginY);
+                mappedPlanetBuffer.putDouble(base + 16, p.pos.z - refOriginZ);
+                mappedPlanetBuffer.putDouble(base + 24, p.mass);
+
+                mappedPlanetBuffer.putDouble(base + 32, p.vel.x);
+                mappedPlanetBuffer.putDouble(base + 40, p.vel.y);
+                mappedPlanetBuffer.putDouble(base + 48, p.vel.z);
+                mappedPlanetBuffer.putDouble(base + 56, Math.max(0.01, p.radius));
+            }
 
             mappedPlanetBuffer.putDouble(base + 64, p.currentAngle);
             mappedPlanetBuffer.putDouble(base + 72, p.rotationPeriod);
@@ -1028,15 +1288,17 @@ public class PhysicsEngine {
             SpaceEngine.Fragment f = fragments.get(i);
             int base = i * GPU_DEBRIS_STRIDE;
             double relX = f.pos.x - refOriginX, relY = f.pos.y - refOriginY, relZ = f.pos.z - refOriginZ;
-            int sx = toSectorCoord(relX), sy = toSectorCoord(relY), sz = toSectorCoord(relZ);
+            int sx = (precMode == 0) ? 0 : toSectorCoord(relX);
+            int sy = (precMode == 0) ? 0 : toSectorCoord(relY);
+            int sz = (precMode == 0) ? 0 : toSectorCoord(relZ);
             mappedDebrisBuffer.putInt(base, sx);
             mappedDebrisBuffer.putInt(base + 4, sy);
             mappedDebrisBuffer.putInt(base + 8, sz);
             mappedDebrisBuffer.putInt(base + 12, 1);
 
-            mappedDebrisBuffer.putFloat(base + 16, toLocalCoord(relX, sx));
-            mappedDebrisBuffer.putFloat(base + 20, toLocalCoord(relY, sy));
-            mappedDebrisBuffer.putFloat(base + 24, toLocalCoord(relZ, sz));
+            mappedDebrisBuffer.putFloat(base + 16, (precMode == 0) ? (float) relX : toLocalCoord(relX, sx));
+            mappedDebrisBuffer.putFloat(base + 20, (precMode == 0) ? (float) relY : toLocalCoord(relY, sy));
+            mappedDebrisBuffer.putFloat(base + 24, (precMode == 0) ? (float) relZ : toLocalCoord(relZ, sz));
             mappedDebrisBuffer.putFloat(base + 28, (float) Math.max(0.01, f.size));
 
             mappedDebrisBuffer.putFloat(base + 32, (float) f.vel.x);
@@ -1055,15 +1317,17 @@ public class PhysicsEngine {
             SpaceEngine.Particle pt = particles.get(i);
             int base = (fCount + i) * GPU_DEBRIS_STRIDE;
             double relX = pt.pos.x - refOriginX, relY = pt.pos.y - refOriginY, relZ = pt.pos.z - refOriginZ;
-            int sx = toSectorCoord(relX), sy = toSectorCoord(relY), sz = toSectorCoord(relZ);
+            int sx = (precMode == 0) ? 0 : toSectorCoord(relX);
+            int sy = (precMode == 0) ? 0 : toSectorCoord(relY);
+            int sz = (precMode == 0) ? 0 : toSectorCoord(relZ);
             mappedDebrisBuffer.putInt(base, sx);
             mappedDebrisBuffer.putInt(base + 4, sy);
             mappedDebrisBuffer.putInt(base + 8, sz);
             mappedDebrisBuffer.putInt(base + 12, 0);
 
-            mappedDebrisBuffer.putFloat(base + 16, toLocalCoord(relX, sx));
-            mappedDebrisBuffer.putFloat(base + 20, toLocalCoord(relY, sy));
-            mappedDebrisBuffer.putFloat(base + 24, toLocalCoord(relZ, sz));
+            mappedDebrisBuffer.putFloat(base + 16, (precMode == 0) ? (float) relX : toLocalCoord(relX, sx));
+            mappedDebrisBuffer.putFloat(base + 20, (precMode == 0) ? (float) relY : toLocalCoord(relY, sy));
+            mappedDebrisBuffer.putFloat(base + 24, (precMode == 0) ? (float) relZ : toLocalCoord(relZ, sz));
             mappedDebrisBuffer.putFloat(base + 28, (float) Math.max(0.01, pt.size));
 
             mappedDebrisBuffer.putFloat(base + 32, (float) pt.vel.x);
@@ -1082,7 +1346,10 @@ public class PhysicsEngine {
                 | (SpaceEngine.enableRocheLimit ? 2 : 0)
                 | (SpaceEngine.enableCentrifugalForce ? 4 : 0)
                 | (SpaceEngine.enableCollisions ? 8 : 0)
-                | ((draggedIndex + 1) << 4);
+                | ((SpaceEngine.physicsSimMode == 1) ? 16 : 0)
+                | (SpaceEngine.enableAccretionDisk ? 32 : 0)
+                | ((precMode & 3) << 6)
+                | ((draggedIndex + 1) << 8);
 
         int debrisGroups = (totalDebris + 63) / 64;
 
@@ -1136,13 +1403,26 @@ public class PhysicsEngine {
         for (int i = 0; i < pSize; i++) {
             SpaceEngine.Planet p = planets.get(i);
             int base = i * GPU_PLANET_STRIDE;
-            p.pos.set(
-                    mappedPlanetBuffer.getDouble(base)      + refOriginX,
-                    mappedPlanetBuffer.getDouble(base + 8)  + refOriginY,
-                    mappedPlanetBuffer.getDouble(base + 16) + refOriginZ
-            );
+            if (precMode == 0) {
+                p.pos.set(
+                        (double) (float) mappedPlanetBuffer.getDouble(base),
+                        (double) (float) mappedPlanetBuffer.getDouble(base + 8),
+                        (double) (float) mappedPlanetBuffer.getDouble(base + 16)
+                );
+                p.vel.set(
+                        (double) (float) mappedPlanetBuffer.getDouble(base + 32),
+                        (double) (float) mappedPlanetBuffer.getDouble(base + 40),
+                        (double) (float) mappedPlanetBuffer.getDouble(base + 48)
+                );
+            } else {
+                p.pos.set(
+                        mappedPlanetBuffer.getDouble(base)      + refOriginX,
+                        mappedPlanetBuffer.getDouble(base + 8)  + refOriginY,
+                        mappedPlanetBuffer.getDouble(base + 16) + refOriginZ
+                );
+                p.vel.set(mappedPlanetBuffer.getDouble(base + 32), mappedPlanetBuffer.getDouble(base + 40), mappedPlanetBuffer.getDouble(base + 48));
+            }
             p.mass = mappedPlanetBuffer.getDouble(base + 24);
-            p.vel.set(mappedPlanetBuffer.getDouble(base + 32), mappedPlanetBuffer.getDouble(base + 40), mappedPlanetBuffer.getDouble(base + 48));
             p.radius = Math.max(0.01, mappedPlanetBuffer.getDouble(base + 56));
             p.currentAngle = mappedPlanetBuffer.getDouble(base + 64);
             p.rotationPeriod = mappedPlanetBuffer.getDouble(base + 72);
@@ -1246,7 +1526,7 @@ public class PhysicsEngine {
                             SCRATCH_VEL.set(hostBody.vel).fma(ejectSpeed, SCRATCH_OFFSET);
 
                             boolean isIcyImpact = "Uranus".equalsIgnoreCase(p.name) || "Enceladus".equalsIgnoreCase(p.name)
-                                    || "Titan".equalsIgnoreCase(p.name) || p.temperature < -15.0;
+                                    || "Titan".equalsIgnoreCase(p.name) || (p.bondAlbedo >= 0.18 && p.temperature < -15.0);
                             double ejectTemp = isIcyImpact ? Math.min(-45.0, p.temperature) : (p.isRigid ? Math.max(p.temperature, 950.0 + relImpactSpeed * 35.0) : p.temperature);
                             spawnImpactDebrisOrGas(p, isIcyImpact, parentTotalMass, parentOrigRadius, SCRATCH_POS, SCRATCH_VEL, pieceMass, ejectTemp, rng);
                         }
@@ -1280,7 +1560,7 @@ public class PhysicsEngine {
             }
 
             if (p.mass > 0 && !Double.isNaN(p.pos.x)) {
-                recordSmoothHermiteTrail(p, i, dtSim);
+                recordSmoothHermiteTrail(p, i, dtSim, precMode);
             } else {
                 p.mass = 0;
                 p.clearTrail();
@@ -1290,27 +1570,26 @@ public class PhysicsEngine {
             }
         }
 
-        for (int i = fCount - 1; i >= 0; i--) {
+        for (int i = 0; i < fCount; i++) {
             int base = i * GPU_DEBRIS_STRIDE;
             float status = mappedDebrisBuffer.getFloat(base + 44);
             int sx = mappedDebrisBuffer.getInt(base), sy = mappedDebrisBuffer.getInt(base + 4), sz = mappedDebrisBuffer.getInt(base + 8);
-            double wx = refOriginX + fromSectorAndLocal(sx, mappedDebrisBuffer.getFloat(base + 16));
-            double wy = refOriginY + fromSectorAndLocal(sy, mappedDebrisBuffer.getFloat(base + 20));
-            double wz = refOriginZ + fromSectorAndLocal(sz, mappedDebrisBuffer.getFloat(base + 24));
+            double wx = (precMode == 0) ? (double) mappedDebrisBuffer.getFloat(base + 16) : (refOriginX + fromSectorAndLocal(sx, mappedDebrisBuffer.getFloat(base + 16)));
+            double wy = (precMode == 0) ? (double) mappedDebrisBuffer.getFloat(base + 20) : (refOriginY + fromSectorAndLocal(sy, mappedDebrisBuffer.getFloat(base + 20)));
+            double wz = (precMode == 0) ? (double) mappedDebrisBuffer.getFloat(base + 24) : (refOriginZ + fromSectorAndLocal(sz, mappedDebrisBuffer.getFloat(base + 24)));
             double dSize = mappedDebrisBuffer.getFloat(base + 28);
             double vx = mappedDebrisBuffer.getFloat(base + 32), vy = mappedDebrisBuffer.getFloat(base + 36), vz = mappedDebrisBuffer.getFloat(base + 40);
             double dMass = mappedDebrisBuffer.getFloat(base + 48), dTemp = mappedDebrisBuffer.getFloat(base + 52), dAngle = mappedDebrisBuffer.getFloat(base + 56);
             float grace = mappedDebrisBuffer.getFloat(base + 60);
 
+            SpaceEngine.Fragment f = fragments.get(i);
             if (status <= 0.0f || Float.isNaN(status)) {
                 if (status <= -5.0f && !Float.isNaN(status)) {
                     int hitIdx = Math.round(-status - 10.0f);
                     if (hitIdx >= 0 && hitIdx < pSize) absorbDebrisIntoPlanet(planets.get(hitIdx), wx, wy, wz, vx, vy, vz, dSize, dMass, dTemp, true);
                 }
-                SpaceEngine.Fragment removed = fragments.remove(i);
-                if (removed != null) removed.life = -1.0;
-            } else {
-                SpaceEngine.Fragment f = fragments.get(i);
+                if (f != null) f.life = -1.0;
+            } else if (f != null) {
                 f.pos.set(wx, wy, wz);
                 f.size = dSize;
                 f.vel.set(vx, vy, vz);
@@ -1319,28 +1598,28 @@ public class PhysicsEngine {
                 f.angle = dAngle;
             }
         }
+        compactFragments(fragments);
 
-        for (int i = ptCount - 1; i >= 0; i--) {
+        for (int i = 0; i < ptCount; i++) {
             int base = (fCount + i) * GPU_DEBRIS_STRIDE;
             float status = mappedDebrisBuffer.getFloat(base + 44);
             int sx = mappedDebrisBuffer.getInt(base), sy = mappedDebrisBuffer.getInt(base + 4), sz = mappedDebrisBuffer.getInt(base + 8);
-            double wx = refOriginX + fromSectorAndLocal(sx, mappedDebrisBuffer.getFloat(base + 16));
-            double wy = refOriginY + fromSectorAndLocal(sy, mappedDebrisBuffer.getFloat(base + 20));
-            double wz = refOriginZ + fromSectorAndLocal(sz, mappedDebrisBuffer.getFloat(base + 24));
+            double wx = (precMode == 0) ? (double) mappedDebrisBuffer.getFloat(base + 16) : (refOriginX + fromSectorAndLocal(sx, mappedDebrisBuffer.getFloat(base + 16)));
+            double wy = (precMode == 0) ? (double) mappedDebrisBuffer.getFloat(base + 20) : (refOriginY + fromSectorAndLocal(sy, mappedDebrisBuffer.getFloat(base + 20)));
+            double wz = (precMode == 0) ? (double) mappedDebrisBuffer.getFloat(base + 24) : (refOriginZ + fromSectorAndLocal(sz, mappedDebrisBuffer.getFloat(base + 24)));
             double dSize = mappedDebrisBuffer.getFloat(base + 28);
             double vx = mappedDebrisBuffer.getFloat(base + 32), vy = mappedDebrisBuffer.getFloat(base + 36), vz = mappedDebrisBuffer.getFloat(base + 40);
             double dMass = mappedDebrisBuffer.getFloat(base + 48), dTemp = mappedDebrisBuffer.getFloat(base + 52);
             float grace = mappedDebrisBuffer.getFloat(base + 60);
 
+            SpaceEngine.Particle pt = particles.get(i);
             if (status <= 0.0f || Float.isNaN(status)) {
                 if (status <= -5.0f && !Float.isNaN(status)) {
                     int hitIdx = Math.round(-status - 10.0f);
                     if (hitIdx >= 0 && hitIdx < pSize) absorbDebrisIntoPlanet(planets.get(hitIdx), wx, wy, wz, vx, vy, vz, dSize, dMass, dTemp, false);
                 }
-                SpaceEngine.Particle removed = particles.remove(i);
-                if (removed != null) removed.life = -1.0;
-            } else {
-                SpaceEngine.Particle pt = particles.get(i);
+                if (pt != null) pt.life = -1.0;
+            } else if (pt != null) {
                 pt.pos.set(wx, wy, wz);
                 pt.size = dSize;
                 pt.vel.set(vx, vy, vz);
@@ -1349,6 +1628,7 @@ public class PhysicsEngine {
                 pt.temperature = dTemp;
             }
         }
+        compactParticles(particles);
 
         if (anyRemoved) {
             for (int i = planets.size() - 1; i >= 0; i--) {
@@ -1363,7 +1643,7 @@ public class PhysicsEngine {
         }
     }
 
-    private static void recordSmoothHermiteTrail(SpaceEngine.Planet p, int idx, double dtSim) {
+    private static void recordSmoothHermiteTrail(SpaceEngine.Planet p, int idx, double dtSim, int precMode) {
         if (p.trailCount == 0) { p.addTrailPoint(p.pos); return; }
 
         double p0x = PREV_POS_X[idx], p0y = PREV_POS_Y[idx], p0z = PREV_POS_Z[idx];
@@ -1375,7 +1655,12 @@ public class PhysicsEngine {
         Vector3d lastNode = p.getTrailPoint(p.trailCount - 1);
         if (lastNode.distanceSquared(p.pos) <= minStep * minStep) return;
 
-        int subdivisions = (int) Math.min(16, Math.max(1, Math.ceil(stepDist / minStep)));
+        if (precMode == 0 || SpaceEngine.physicsSimMode == 0) {
+            p.addTrailPoint(p.pos);
+            return;
+        }
+
+        int subdivisions = (int) Math.min(12, Math.max(1, Math.ceil(stepDist / minStep)));
         if (subdivisions <= 1 || Math.abs(dtSim) < 1e-6) { p.addTrailPoint(p.pos); return; }
 
         double v0Len = Math.sqrt(PREV_VEL_X[idx] * PREV_VEL_X[idx] + PREV_VEL_Y[idx] * PREV_VEL_Y[idx] + PREV_VEL_Z[idx] * PREV_VEL_Z[idx]);
@@ -1441,25 +1726,12 @@ public class PhysicsEngine {
             SpaceEngine.Planet source, double parentTotalMass, double parentOrigRadius,
             Vector3d pPos, Vector3d pVel, double pieceMass, double tempC, ThreadLocalRandom rng) {
         boolean isIcy = "Uranus".equalsIgnoreCase(source.name) || "Enceladus".equalsIgnoreCase(source.name)
-                || "Titan".equalsIgnoreCase(source.name) || source.temperature < -15.0;
+                || "Titan".equalsIgnoreCase(source.name) || (source.bondAlbedo >= 0.18 && source.temperature < -15.0);
         spawnImpactDebrisOrGas(source, isIcy, parentTotalMass, parentOrigRadius, pPos, pVel, pieceMass, tempC, rng);
     }
 
     private static int findMemoryTypeWithFallback(int typeBits, int preferredProps, int fallbackProps) {
-        VkPhysicalDeviceMemoryProperties memProps = VkPhysicalDeviceMemoryProperties.calloc();
-        vkGetPhysicalDeviceMemoryProperties(SBoxVulkanCore.physicalDevice, memProps);
-        for (int i = 0; i < memProps.memoryTypeCount(); i++) {
-            if ((typeBits & (1 << i)) != 0 && (memProps.memoryTypes(i).propertyFlags() & preferredProps) == preferredProps) {
-                memProps.free(); return i;
-            }
-        }
-        for (int i = 0; i < memProps.memoryTypeCount(); i++) {
-            if ((typeBits & (1 << i)) != 0 && (memProps.memoryTypes(i).propertyFlags() & fallbackProps) == fallbackProps) {
-                memProps.free(); return i;
-            }
-        }
-        memProps.free();
-        throw new RuntimeException("Не найден подходящий тип памяти Vulkan для PhysicsEngine!");
+        return SBoxVulkanCore.findMemoryType(typeBits, preferredProps, fallbackProps);
     }
 
     private static void absorbDebrisIntoPlanet(

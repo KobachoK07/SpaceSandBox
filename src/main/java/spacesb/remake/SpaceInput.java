@@ -3,11 +3,13 @@ package spacesb.remake;
 import org.joml.Vector3d;
 import org.lwjgl.glfw.GLFW;
 import org.lwjgl.system.MemoryStack;
+import spacesb.remake.render.SBoxVulkanCore;
 
 import java.awt.Desktop;
 import java.net.URI;
 import java.nio.DoubleBuffer;
 import java.nio.IntBuffer;
+import java.util.Locale;
 
 import static spacesb.remake.SpaceEngine.*;
 
@@ -17,16 +19,41 @@ public class SpaceInput {
     private static double lastMouseX = 0, lastMouseY = 0;
     private static int lastLogicalW = 854, lastLogicalH = 480;
 
+    public static double getLastMouseX() { return lastMouseX; }
+    public static double getLastMouseY() { return lastMouseY; }
+
     private static void openUrl(String url) {
         new Thread(() -> {
             try {
                 if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) {
                     Desktop.getDesktop().browse(new URI(url));
+                    return;
+                }
+            } catch (Throwable ignored) {}
+            try {
+                String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
+                if (os.contains("win")) {
+                    new ProcessBuilder("explorer", url).start();
+                } else if (os.contains("mac")) {
+                    new ProcessBuilder("open", url).start();
                 } else {
-                    new ProcessBuilder("rundll32", "url.dll,FileProtocolHandler", url).start();
+                    new ProcessBuilder("xdg-open", url).start();
                 }
             } catch (Exception ignored) {}
         }, "SBox-URL-Opener").start();
+    }
+
+    public static void applySimRename() {
+        if (!isRenamingSim) return;
+        isRenamingSim = false;
+        if (renamingSimIndex >= 0 && renamingSimIndex < SimulationManager.savedSimulations.size()) {
+            SimulationManager.SavedSimEntry entry = SimulationManager.savedSimulations.get(renamingSimIndex);
+            if (simRenameBuffer != null && !simRenameBuffer.trim().isEmpty()) {
+                SimulationManager.renameSimulation(entry, simRenameBuffer.trim());
+                SpaceUI.addNotification("Renamed: " + entry.name);
+            }
+        }
+        renamingSimIndex = -1;
     }
 
     private static void ensureScrollCallback(long window) {
@@ -35,6 +62,16 @@ public class SpaceInput {
         GLFW.glfwSetScrollCallback(window, (win, xoffset, yoffset) -> {
             if (isWelcomeMenuOpen || isPhotoModeActive || yoffset == 0.0) return;
 
+            int escPanelW = Math.max(260, (int) (lastLogicalW * 0.28f));
+            if (isEscMenuOpen && !CameraManager.isLocked && lastMouseX <= escPanelW && lastMouseY < lastLogicalH - 26) {
+                if (isSimulationsMenuOpen) {
+                    simListScrollY = Math.max(0.0, Math.min(simListMaxScroll, simListScrollY - yoffset * 24.0));
+                } else if (!isResolutionMenuOpen && !isMathBitsMenuOpen && !SpaceUI.isLanguageMenuOpen && openColorPicker == 0) {
+                    escMenuScrollY = Math.max(0.0, Math.min(escMenuMaxScroll, escMenuScrollY - yoffset * 18.0));
+                }
+                return;
+            }
+
             if (isAddMenuOpen && lastMouseY >= lastLogicalH - 26 - 135 && lastMouseY < lastLogicalH - 26 && lastMouseX < lastLogicalW - 185) {
                 menuScrollY = Math.max(0.0, menuScrollY - yoffset * 22.0);
                 return;
@@ -42,7 +79,13 @@ public class SpaceInput {
 
             if (CameraManager.isLocked && !isEditMenuMinimized
                     && lastMouseX <= currentEditMenuX + currentEditMenuW && lastMouseY < lastLogicalH - 26) {
-                editMenuScrollY = Math.max(0.0, Math.min(140.0, editMenuScrollY - yoffset * 18.0));
+                if (isObjectPreviewOpen && isInside(lastMouseX, lastMouseY, previewBoxHit)) {
+                    if (yoffset > 0) objectPreviewZoom = Math.max(2.0f, objectPreviewZoom / 1.14f);
+                    else if (yoffset < 0) objectPreviewZoom = Math.min(20.0f, objectPreviewZoom * 1.14f);
+                    return;
+                }
+                double maxScroll = isObjectPreviewOpen ? 290.0 : 140.0;
+                editMenuScrollY = Math.max(0.0, Math.min(maxScroll, editMenuScrollY - yoffset * 18.0));
                 return;
             }
 
@@ -91,10 +134,20 @@ public class SpaceInput {
         particlePreset = Math.min(3, Math.max(0, (int) (particleSliderPos * 4.0f)));
     }
 
+    private static void updatePhysicsModeFromMouse(double mouseX) {
+        int tx = escPhysicsModeTrackHit[0], tw = Math.max(1, escPhysicsModeTrackHit[2]);
+        physicsModeSliderPos = Math.max(0.0f, Math.min(1.0f, (float) ((mouseX - tx) / tw)));
+        physicsSimMode = (physicsModeSliderPos >= 0.5f) ? 1 : 0;
+    }
+
     private static void updateVolumeFromMouse(double mouseX) {
         int tx = escVolumeTrackHit[0], tw = Math.max(1, escVolumeTrackHit[2]);
         musicVolume = Math.max(0.0f, Math.min(1.0f, (float) ((mouseX - tx) / tw)));
         SBoxAudioEngine.setMusicVolume(musicVolume);
+    }
+
+    private static boolean isInside(double mx, double my, int[] rect) {
+        return rect[2] > 0 && rect[3] > 0 && mx >= rect[0] && mx <= rect[0] + rect[2] && my >= rect[1] && my <= rect[1] + rect[3];
     }
 
     public static void processInput(long window, int sWidth, int sHeight, int scale) {
@@ -105,13 +158,57 @@ public class SpaceInput {
         if (isAddMenuOpen || isToolsMenuOpen) {
             isEscMenuOpen = false;
             isResolutionMenuOpen = false;
+            isMathBitsMenuOpen = false;
             SpaceUI.isLanguageMenuOpen = false;
+            openColorPicker = 0;
+            if (isRenamingSim) applySimRename();
         }
 
         for (int k = 32; k <= GLFW.GLFW_KEY_LAST; k++) {
             boolean down = GLFW.glfwGetKey(window, k) == GLFW.GLFW_PRESS;
             justPressed[k] = down && !keyStates[k];
             keyStates[k] = down;
+        }
+
+        if (isRenamingSim) {
+            if (justPressed[GLFW.GLFW_KEY_BACKSPACE] && !simRenameBuffer.isEmpty()) {
+                simRenameBuffer = simRenameBuffer.substring(0, simRenameBuffer.length() - 1);
+            }
+            if (justPressed[GLFW.GLFW_KEY_ENTER] || justPressed[GLFW.GLFW_KEY_KP_ENTER]) {
+                applySimRename();
+                return;
+            }
+            if (justPressed[GLFW.GLFW_KEY_ESCAPE]) {
+                isRenamingSim = false;
+                renamingSimIndex = -1;
+                escPressed = true;
+                return;
+            }
+            boolean shift = keyStates[GLFW.GLFW_KEY_LEFT_SHIFT] || keyStates[GLFW.GLFW_KEY_RIGHT_SHIFT];
+            if (simRenameBuffer.length() < 26) {
+                for (int k = GLFW.GLFW_KEY_A; k <= GLFW.GLFW_KEY_Z; k++) {
+                    if (justPressed[k]) {
+                        char c = (char) ((shift ? 'A' : 'a') + (k - GLFW.GLFW_KEY_A));
+                        simRenameBuffer += c;
+                    }
+                }
+                for (int k = GLFW.GLFW_KEY_0; k <= GLFW.GLFW_KEY_9; k++) {
+                    if (justPressed[k]) simRenameBuffer += (char) ('0' + (k - GLFW.GLFW_KEY_0));
+                }
+                for (int k = GLFW.GLFW_KEY_KP_0; k <= GLFW.GLFW_KEY_KP_9; k++) {
+                    if (justPressed[k]) simRenameBuffer += (char) ('0' + (k - GLFW.GLFW_KEY_KP_0));
+                }
+                if (justPressed[GLFW.GLFW_KEY_SPACE] && !simRenameBuffer.isEmpty()) {
+                    simRenameBuffer += " ";
+                }
+                if (justPressed[GLFW.GLFW_KEY_MINUS] || justPressed[GLFW.GLFW_KEY_KP_SUBTRACT]) {
+                    simRenameBuffer += shift ? "_" : "-";
+                }
+                if (justPressed[GLFW.GLFW_KEY_PERIOD] || justPressed[GLFW.GLFW_KEY_KP_DECIMAL]) {
+                    simRenameBuffer += ".";
+                }
+            }
+            return;
         }
 
         if (isTypingSpeed || isTypingPlanetEdit) {
@@ -171,6 +268,7 @@ public class SpaceInput {
                 CameraManager.isLocked = false;
                 CameraManager.lockedTarget = null;
                 openEditUnitMenu = -1;
+                isDraggingObjectPreview = false;
             } else if (isDeleteToolActive) {
                 isDeleteToolActive = false;
             } else if (isMoveToolActive) {
@@ -179,7 +277,9 @@ public class SpaceInput {
             } else if (!isWelcomeMenuOpen) {
                 isEscMenuOpen = !isEscMenuOpen;
                 isResolutionMenuOpen = false;
+                isMathBitsMenuOpen = false;
                 SpaceUI.isLanguageMenuOpen = false;
+                openColorPicker = 0;
             }
         }
         escPressed = escDown;
@@ -229,7 +329,24 @@ public class SpaceInput {
         lastMouseY = mouseY;
 
         boolean rmbDown = GLFW.glfwGetMouseButton(window, GLFW.GLFW_MOUSE_BUTTON_RIGHT) == GLFW.GLFW_PRESS;
+        boolean rmbJustPressed = rmbDown && !isRMBPressed;
         isRMBPressed = rmbDown;
+
+        if (rmbJustPressed && !isWelcomeMenuOpen && !isPhotoModeActive
+                && isPlacingPlanet && currentSpawnMode == SpawnMode.ORBIT && !planets.isEmpty()) {
+            boolean overAnyUi = (mouseY >= sHeight - 26)
+                    || (isToolsMenuOpen && mouseX >= toolMenuX && mouseY >= toolMenuY)
+                    || (isAddMenuOpen && mouseY >= sHeight - 26 - 135)
+                    || (isEscMenuOpen && mouseX <= Math.max(260, (int) (sWidth * 0.28f)));
+            if (!overAnyUi) {
+                Planet hitTarget = CameraManager.getRaycastHit();
+                if (hitTarget != null) {
+                    orbitTarget = hitTarget;
+                    SpaceUI.addNotification("Orbit Target: " + hitTarget.name);
+                }
+            }
+        }
+
         CameraManager.processMouseInput(window, rmbDown && !isWelcomeMenuOpen);
 
         boolean lmbDown = GLFW.glfwGetMouseButton(window, GLFW.GLFW_MOUSE_BUTTON_LEFT) == GLFW.GLFW_PRESS;
@@ -255,6 +372,9 @@ public class SpaceInput {
                 return;
             }
 
+            if (isRenamingSim) {
+                applySimRename();
+            }
             if (isTypingSpeed && !(mouseX >= speedBoxHitX && mouseX <= speedBoxHitX + speedBoxHitW && mouseY >= speedBoxHitY && mouseY <= speedBoxHitY + speedBoxHitH)) {
                 applyTypedSpeed();
             }
@@ -267,7 +387,6 @@ public class SpaceInput {
 
             boolean uiConsumed = false;
 
-            // Нижняя панель проверяется первой, чтобы нажатие на Add или Tools закрывало меню ESC!
             if (mouseY >= sHeight - 26) {
                 uiConsumed = true;
                 if (mouseX >= playHitX && mouseX <= playHitX + playHitW && mouseY >= playHitY && mouseY <= playHitY + playHitH) {
@@ -283,7 +402,9 @@ public class SpaceInput {
                         isDeleteToolActive = false;
                         isEscMenuOpen = false;
                         isResolutionMenuOpen = false;
+                        isMathBitsMenuOpen = false;
                         SpaceUI.isLanguageMenuOpen = false;
+                        openColorPicker = 0;
                     }
                 } else if (mouseX >= toolsBtnX && mouseX <= toolsBtnX + toolsBtnW && mouseY >= toolsBtnY && mouseY <= toolsBtnY + toolsBtnH) {
                     isToolsMenuOpen = !isToolsMenuOpen;
@@ -291,7 +412,9 @@ public class SpaceInput {
                         isAddMenuOpen = false;
                         isEscMenuOpen = false;
                         isResolutionMenuOpen = false;
+                        isMathBitsMenuOpen = false;
                         SpaceUI.isLanguageMenuOpen = false;
+                        openColorPicker = 0;
                     }
                 }
             }
@@ -306,73 +429,240 @@ public class SpaceInput {
             int escPanelW = Math.max(260, (int) (sWidth * 0.28f));
             if (!uiConsumed && isEscMenuOpen && !CameraManager.isLocked && mouseX <= escPanelW) {
                 uiConsumed = true;
-                if (SpaceUI.isLanguageMenuOpen) {
-                    // Обрабатывается в SpaceUI
-                } else if (isResolutionMenuOpen && mouseX >= escResDropdownHit[0] && mouseX <= escResDropdownHit[0] + escResDropdownHit[2]
-                        && mouseY >= escResDropdownHit[1] && mouseY <= escResDropdownHit[1] + escResDropdownHit[3]) {
+
+                // Верхние кнопки ESC (Новая симуляция / Симуляции) доступны всегда
+                if (isInside(mouseX, mouseY, escTopBtnHits[0])) {
+                    openColorPicker = 0;
+                    isSimulationsMenuOpen = false;
+                    planets.clear();
+                    fragments.clear();
+                    particles.clear();
+                    simTimeSeconds = 0.0;
+                    CameraManager.isLocked = false;
+                    CameraManager.lockedTarget = null;
+                    isPlacingPlanet = false;
+                    isDraggingOrbit = false;
+                    orbitTarget = null;
+                    SpaceUI.addNotification("New Simulation Started");
+                } else if (isInside(mouseX, mouseY, escTopBtnHits[1])) {
+                    openColorPicker = 0;
+                    isResolutionMenuOpen = false;
+                    isMathBitsMenuOpen = false;
+                    SpaceUI.isLanguageMenuOpen = false;
+                    isSimulationsMenuOpen = !isSimulationsMenuOpen;
+                    if (isSimulationsMenuOpen) {
+                        simMenuAnimProgress = 0.0;
+                        SimulationManager.refreshSavedSimulations();
+                    }
+                } else if (isSimulationsMenuOpen) {
+                    if (isInside(mouseX, mouseY, escSimSubTabHits[0])) {
+                        simMenuTab = 0;
+                        simListScrollY = 0.0;
+                    } else if (isInside(mouseX, mouseY, escSimSubTabHits[1])) {
+                        simMenuTab = 1;
+                        simListScrollY = 0.0;
+                        SimulationManager.refreshSavedSimulations();
+                    } else if (simMenuTab == 0) {
+                        if (isInside(mouseX, mouseY, escSimItemHits[0])) {
+                            selectedPresetSimIndex = 0;
+                        } else if (isInside(mouseX, mouseY, escSimPresetLoadBtnHit)) {
+                            SimulationManager.loadSolarSystemPreset();
+                            isEscMenuOpen = false;
+                            isSimulationsMenuOpen = false;
+                        } else if (isInside(mouseX, mouseY, escExitBtnHit)) {
+                            saveSettings();
+                            SBoxAudioEngine.shutdown();
+                            System.exit(0);
+                        }
+                    } else {
+                        if (isInside(mouseX, mouseY, escSimNewSaveBtnHit)) {
+                            SimulationManager.SavedSimEntry created = SimulationManager.saveCurrentSimulation(null, null);
+                            if (created != null) {
+                                selectedSavedSimIndex = 0;
+                                isRenamingSim = true;
+                                renamingSimIndex = 0;
+                                simRenameBuffer = created.name;
+                                simListScrollY = 0.0;
+                                SpaceUI.addNotification("Saved! Type name & press Enter");
+                            }
+                        } else if (isInside(mouseX, mouseY, escSimSavedBottomBtnHits[0])) {
+                            // 1 ряд 1 кнопка: Загрузить симуляцию
+                            if (selectedSavedSimIndex >= 0 && selectedSavedSimIndex < SimulationManager.savedSimulations.size()) {
+                                SimulationManager.loadSavedSimulation(SimulationManager.savedSimulations.get(selectedSavedSimIndex));
+                                isEscMenuOpen = false;
+                                isSimulationsMenuOpen = false;
+                            }
+                        } else if (isInside(mouseX, mouseY, escSimSavedBottomBtnHits[1])) {
+                            // 1 ряд 2 кнопка: Перезаписать симуляцию (или создать новую, если список пуст)
+                            SimulationManager.SavedSimEntry target = (selectedSavedSimIndex >= 0 && selectedSavedSimIndex < SimulationManager.savedSimulations.size())
+                                    ? SimulationManager.savedSimulations.get(selectedSavedSimIndex) : null;
+                            SimulationManager.SavedSimEntry saved = SimulationManager.saveCurrentSimulation(target != null ? target.name : null, target);
+                            if (saved != null) {
+                                int idx = SimulationManager.savedSimulations.indexOf(saved);
+                                if (idx < 0) idx = 0;
+                                selectedSavedSimIndex = idx;
+                                isRenamingSim = true;
+                                renamingSimIndex = idx;
+                                simRenameBuffer = saved.name;
+                                SpaceUI.addNotification("Saved! Type name & press Enter");
+                            }
+                        } else if (isInside(mouseX, mouseY, escSimSavedBottomBtnHits[2])) {
+                            // 2 ряд 1 кнопка: Удалить симуляцию
+                            if (selectedSavedSimIndex >= 0 && selectedSavedSimIndex < SimulationManager.savedSimulations.size()) {
+                                SimulationManager.SavedSimEntry del = SimulationManager.savedSimulations.get(selectedSavedSimIndex);
+                                SpaceUI.addNotification("Deleted: " + del.name);
+                                SimulationManager.deleteSavedSimulation(del);
+                                selectedSavedSimIndex = Math.max(0, Math.min(selectedSavedSimIndex, SimulationManager.savedSimulations.size() - 1));
+                            }
+                        } else if (isInside(mouseX, mouseY, escSimSavedBottomBtnHits[3])) {
+                            // 2 ряд 2 кнопка: Корневая папка
+                            SimulationManager.openSimulationsFolder();
+                        } else {
+                            int maxItems = Math.min(SimulationManager.savedSimulations.size(), escSimItemHits.length);
+                            for (int i = 0; i < maxItems; i++) {
+                                if (isInside(mouseX, mouseY, escSimItemHits[i])) {
+                                    long now = System.currentTimeMillis();
+                                    if (i == lastClickedSimItemIndex && (now - lastSimItemClickMs) < 420L) {
+                                        isRenamingSim = true;
+                                        renamingSimIndex = i;
+                                        simRenameBuffer = SimulationManager.savedSimulations.get(i).name;
+                                    } else {
+                                        selectedSavedSimIndex = i;
+                                        lastClickedSimItemIndex = i;
+                                        lastSimItemClickMs = now;
+                                    }
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                } else if (openColorPicker != 0 && isInside(mouseX, mouseY, escColorPopupHit)) {
+                    int cols = 8;
+                    int cellW = (escColorPopupHit[2] - 8) / cols;
+                    int cellH = (escColorPopupHit[3] - 8) / 2;
+                    int cIdx = (int) ((mouseX - (escColorPopupHit[0] + 4)) / Math.max(1, cellW));
+                    int rIdx = (int) ((mouseY - (escColorPopupHit[1] + 4)) / Math.max(1, cellH));
+                    if (cIdx >= 0 && cIdx < cols && rIdx >= 0 && rIdx < 2) {
+                        int pIdx = rIdx * cols + cIdx;
+                        if (openColorPicker == 1 && pIdx < PALETTE_COLOR_1.length) {
+                            uiColor1 = PALETTE_COLOR_1[pIdx];
+                        } else if (openColorPicker == 2 && pIdx < PALETTE_COLOR_2.length) {
+                            uiColor2 = PALETTE_COLOR_2[pIdx];
+                        }
+                    }
+                    openColorPicker = 0;
+                } else if (SpaceUI.isLanguageMenuOpen && isInside(mouseX, mouseY, SpaceUI.escLangDropdownHit)) {
+                    int langItemH = 18;
+                    int chosenLang = (int) ((mouseY - SpaceUI.escLangDropdownHit[1]) / langItemH);
+                    if (chosenLang >= 0 && chosenLang < SpaceUI.LANGUAGE_NAMES.length) {
+                        SpaceUI.currentLanguage = chosenLang;
+                        SpaceUI.addNotification(SpaceUI.tr(0) + ": " + SpaceUI.LANGUAGE_NAMES[SpaceUI.currentLanguage]);
+                    }
+                    SpaceUI.isLanguageMenuOpen = false;
+                } else if (isResolutionMenuOpen && isInside(mouseX, mouseY, escResDropdownHit)) {
                     int idx = (int) ((mouseY - escResDropdownHit[1]) / 16);
                     if (idx >= 0 && idx < RESOLUTIONS.length) {
                         resolutionIndex = idx;
                         applyDisplaySettings(window);
                     }
                     isResolutionMenuOpen = false;
+                } else if (isMathBitsMenuOpen && isInside(mouseX, mouseY, escMathBitsDropdownHit)) {
+                    int idx = (int) ((mouseY - escMathBitsDropdownHit[1]) / 16);
+                    if (idx >= 0 && idx < MATH_BITS_OPTIONS.length) {
+                        if (!SBoxVulkanCore.supportsFp64 && idx == 2) {
+                            physicsPrecisionMode = 1;
+                            SpaceUI.addNotification("GPU does not support native 64-bit: using 32+64 bit");
+                        } else {
+                            physicsPrecisionMode = idx;
+                        }
+                    }
+                    isMathBitsMenuOpen = false;
                 } else {
                     isResolutionMenuOpen = false;
-                    if (mouseX >= escTopBtnHits[0][0] && mouseX <= escTopBtnHits[0][0] + escTopBtnHits[0][2]
-                            && mouseY >= escTopBtnHits[0][1] && mouseY <= escTopBtnHits[0][1] + escTopBtnHits[0][3]) {
-                        planets.clear();
-                        fragments.clear();
-                        particles.clear();
-                        simTimeSeconds = 0.0;
-                        CameraManager.isLocked = false;
-                        CameraManager.lockedTarget = null;
-                        isPlacingPlanet = false;
-                        isDraggingOrbit = false;
-                        orbitTarget = null;
-                        SpaceUI.addNotification("New Simulation Started");
-                    } else if (mouseX >= escSettingHits[0][0] && mouseX <= escSettingHits[0][0] + escSettingHits[0][2]
-                            && mouseY >= escSettingHits[0][1] && mouseY <= escSettingHits[0][1] + escSettingHits[0][3]) {
-                        fsrEnabled = !fsrEnabled;
-                    } else if (mouseX >= escFsrTrackHit[0] && mouseX <= escFsrTrackHit[0] + escFsrTrackHit[2]
-                            && mouseY >= escFsrTrackHit[1] - 2 && mouseY <= escFsrTrackHit[1] + escFsrTrackHit[3] + 2) {
-                        isDraggingFsrCube = true;
-                        updateFsrFromMouse(mouseX);
-                    } else if (mouseX >= escSettingHits[2][0] && mouseX <= escSettingHits[2][0] + escSettingHits[2][2]
-                            && mouseY >= escSettingHits[2][1] && mouseY <= escSettingHits[2][1] + escSettingHits[2][3]) {
-                        hdrEnabled = !hdrEnabled;
-                    } else if (mouseX >= escSettingHits[4][0] && mouseX <= escSettingHits[4][0] + escSettingHits[4][2]
-                            && mouseY >= escSettingHits[4][1] && mouseY <= escSettingHits[4][1] + escSettingHits[4][3]) {
-                        vsyncEnabled = !vsyncEnabled;
-                        needsSwapchainRecreate = true;
-                    } else if (mouseX >= escSettingHits[5][0] && mouseX <= escSettingHits[5][0] + escSettingHits[5][2]
-                            && mouseY >= escSettingHits[5][1] && mouseY <= escSettingHits[5][1] + escSettingHits[5][3]) {
-                        isResolutionMenuOpen = !isResolutionMenuOpen;
-                    } else if (mouseX >= escSettingHits[6][0] && mouseX <= escSettingHits[6][0] + escSettingHits[6][2]
-                            && mouseY >= escSettingHits[6][1] && mouseY <= escSettingHits[6][1] + escSettingHits[6][3]) {
-                        isFullscreen = !isFullscreen;
-                        applyDisplaySettings(window);
-                    } else if (mouseX >= escSettingHits[7][0] && mouseX <= escSettingHits[7][0] + escSettingHits[7][2]
-                            && mouseY >= escSettingHits[7][1] && mouseY <= escSettingHits[7][1] + escSettingHits[7][3]) {
-                        showFpsOverlay = !showFpsOverlay;
-                    } else if (mouseX >= escSettingHits[8][0] && mouseX <= escSettingHits[8][0] + escSettingHits[8][2]
-                            && mouseY >= escSettingHits[8][1] && mouseY <= escSettingHits[8][1] + escSettingHits[8][3]) {
-                        photoModeFeatureEnabled = !photoModeFeatureEnabled;
-                    } else if (mouseX >= escShaderTrackHit[0] && mouseX <= escShaderTrackHit[0] + escShaderTrackHit[2]
-                            && mouseY >= escShaderTrackHit[1] - 2 && mouseY <= escShaderTrackHit[1] + escShaderTrackHit[3] + 2) {
-                        isDraggingShaderCube = true;
-                        updateShaderFromMouse(mouseX);
-                    } else if (mouseX >= escParticleTrackHit[0] && mouseX <= escParticleTrackHit[0] + escParticleTrackHit[2]
-                            && mouseY >= escParticleTrackHit[1] - 2 && mouseY <= escParticleTrackHit[1] + escParticleTrackHit[3] + 2) {
-                        isDraggingParticleCube = true;
-                        updateParticleFromMouse(mouseX);
-                    } else if (mouseX >= escVolumeTrackHit[0] && mouseX <= escVolumeTrackHit[0] + escVolumeTrackHit[2]
-                            && mouseY >= escVolumeTrackHit[1] - 2 && mouseY <= escVolumeTrackHit[1] + escVolumeTrackHit[3] + 2) {
-                        isDraggingVolumeCube = true;
-                        updateVolumeFromMouse(mouseX);
-                    } else if (mouseX >= escExitBtnHit[0] && mouseX <= escExitBtnHit[0] + escExitBtnHit[2]
-                            && mouseY >= escExitBtnHit[1] && mouseY <= escExitBtnHit[1] + escExitBtnHit[3]) {
+                    isMathBitsMenuOpen = false;
+                    SpaceUI.isLanguageMenuOpen = false;
+
+                    if (isInside(mouseX, mouseY, escExitBtnHit)) {
+                        saveSettings();
                         SBoxAudioEngine.shutdown();
                         System.exit(0);
+                    } else if (isInside(mouseX, mouseY, escVisualTabHit)) {
+                        openColorPicker = 0;
+                        isVisualTabOpen = !isVisualTabOpen;
+                    } else if (isInside(mouseX, mouseY, escPhysicsTabHit)) {
+                        openColorPicker = 0;
+                        isPhysicsTabOpen = !isPhysicsTabOpen;
+                    } else if (isInside(mouseX, mouseY, escMiscTabHit)) {
+                        openColorPicker = 0;
+                        isMiscTabOpen = !isMiscTabOpen;
+                    } else if (isVisualTabOpen && isInside(mouseX, mouseY, escSettingHits[0])) {
+                        openColorPicker = 0;
+                        fsrEnabled = !fsrEnabled;
+                    } else if (isVisualTabOpen && escFsrTrackHit[2] > 0 && mouseX >= escFsrTrackHit[0] && mouseX <= escFsrTrackHit[0] + escFsrTrackHit[2]
+                            && mouseY >= escFsrTrackHit[1] - 2 && mouseY <= escFsrTrackHit[1] + escFsrTrackHit[3] + 2) {
+                        openColorPicker = 0;
+                        isDraggingFsrCube = true;
+                        updateFsrFromMouse(mouseX);
+                    } else if (isVisualTabOpen && isInside(mouseX, mouseY, escSettingHits[2])) {
+                        openColorPicker = 0;
+                        hdrEnabled = !hdrEnabled;
+                    } else if (isVisualTabOpen && isInside(mouseX, mouseY, escSettingHits[4])) {
+                        openColorPicker = 0;
+                        vsyncEnabled = !vsyncEnabled;
+                        needsSwapchainRecreate = true;
+                    } else if (isVisualTabOpen && isInside(mouseX, mouseY, escSettingHits[5])) {
+                        openColorPicker = 0;
+                        isResolutionMenuOpen = true;
+                    } else if (isVisualTabOpen && isInside(mouseX, mouseY, escSettingHits[6])) {
+                        openColorPicker = 0;
+                        isFullscreen = !isFullscreen;
+                        applyDisplaySettings(window);
+                    } else if (isVisualTabOpen && escShaderTrackHit[2] > 0 && mouseX >= escShaderTrackHit[0] && mouseX <= escShaderTrackHit[0] + escShaderTrackHit[2]
+                            && mouseY >= escShaderTrackHit[1] - 2 && mouseY <= escShaderTrackHit[1] + escShaderTrackHit[3] + 2) {
+                        openColorPicker = 0;
+                        isDraggingShaderCube = true;
+                        updateShaderFromMouse(mouseX);
+                    } else if (isVisualTabOpen && escParticleTrackHit[2] > 0 && mouseX >= escParticleTrackHit[0] && mouseX <= escParticleTrackHit[0] + escParticleTrackHit[2]
+                            && mouseY >= escParticleTrackHit[1] - 2 && mouseY <= escParticleTrackHit[1] + escParticleTrackHit[3] + 2) {
+                        openColorPicker = 0;
+                        isDraggingParticleCube = true;
+                        updateParticleFromMouse(mouseX);
+                    } else if (isVisualTabOpen && isInside(mouseX, mouseY, escSaturnRingsHit)) {
+                        openColorPicker = 0;
+                        enableSaturnRings = !enableSaturnRings;
+                        PhysicsEngine.ensureSaturnRings(planets);
+                    } else if (isVisualTabOpen && isInside(mouseX, mouseY, escAccretionDiskHit)) {
+                        openColorPicker = 0;
+                        enableAccretionDisk = !enableAccretionDisk;
+                    } else if (isVisualTabOpen && isInside(mouseX, mouseY, escColor1Hit)) {
+                        openColorPicker = (openColorPicker == 1) ? 0 : 1;
+                    } else if (isVisualTabOpen && isInside(mouseX, mouseY, escColor2Hit)) {
+                        openColorPicker = (openColorPicker == 2) ? 0 : 2;
+                    } else if (isPhysicsTabOpen && isInside(mouseX, mouseY, escMathBitsBtnHit)) {
+                        openColorPicker = 0;
+                        isMathBitsMenuOpen = true;
+                    } else if (isPhysicsTabOpen && escPhysicsModeTrackHit[2] > 0
+                            && mouseX >= escPhysicsModeTrackHit[0] && mouseX <= escPhysicsModeTrackHit[0] + escPhysicsModeTrackHit[2]
+                            && mouseY >= escPhysicsModeTrackHit[1] - 2 && mouseY <= escPhysicsModeTrackHit[1] + escPhysicsModeTrackHit[3] + 2) {
+                        openColorPicker = 0;
+                        isDraggingPhysicsModeCube = true;
+                        updatePhysicsModeFromMouse(mouseX);
+                    } else if (isMiscTabOpen && isInside(mouseX, mouseY, escSettingHits[7])) {
+                        openColorPicker = 0;
+                        showFpsOverlay = !showFpsOverlay;
+                    } else if (isMiscTabOpen && isInside(mouseX, mouseY, escSettingHits[8])) {
+                        openColorPicker = 0;
+                        photoModeFeatureEnabled = !photoModeFeatureEnabled;
+                    } else if (isMiscTabOpen && escVolumeTrackHit[2] > 0 && mouseX >= escVolumeTrackHit[0] && mouseX <= escVolumeTrackHit[0] + escVolumeTrackHit[2]
+                            && mouseY >= escVolumeTrackHit[1] - 2 && mouseY <= escVolumeTrackHit[1] + escVolumeTrackHit[3] + 2) {
+                        openColorPicker = 0;
+                        isDraggingVolumeCube = true;
+                        updateVolumeFromMouse(mouseX);
+                    } else if (isMiscTabOpen && isInside(mouseX, mouseY, SpaceUI.escLangBtnHit)) {
+                        openColorPicker = 0;
+                        SpaceUI.isLanguageMenuOpen = true;
+                    } else {
+                        openColorPicker = 0;
                     }
                 }
             }
@@ -389,7 +679,8 @@ public class SpaceInput {
                         showGrid = !showGrid;
                         if (showGrid) SpaceUI.showGravityGrid = false;
                     } else if (mouseY >= SpaceUI.gravGridToolY && mouseY <= SpaceUI.gravGridToolY + th) {
-                        // Переключается в SpaceUI
+                        SpaceUI.showGravityGrid = !SpaceUI.showGravityGrid;
+                        if (SpaceUI.showGravityGrid) showGrid = false;
                     } else if (mouseY >= trailToolY && mouseY <= trailToolY + th) {
                         showTrails = !showTrails;
                     } else if (mouseY >= SpaceUI.hzToolY && mouseY <= SpaceUI.hzToolY + th) {
@@ -470,6 +761,9 @@ public class SpaceInput {
                     isEditMenuMinimized = !isEditMenuMinimized;
                     openEditUnitMenu = -1;
                     uiConsumed = true;
+                } else if (mouseX >= viewBtnX && mouseX <= viewBtnX + viewBtnS && mouseY >= viewBtnY && mouseY <= viewBtnY + viewBtnS) {
+                    isObjectPreviewOpen = !isObjectPreviewOpen;
+                    uiConsumed = true;
                 } else if (mouseX >= flashBtnX && mouseX <= flashBtnX + flashBtnS && mouseY >= flashBtnY && mouseY <= flashBtnY + flashBtnS) {
                     p.flashlightOn = !p.flashlightOn;
                     uiConsumed = true;
@@ -478,7 +772,12 @@ public class SpaceInput {
                     uiConsumed = true;
                 } else if (!isEditMenuMinimized && mouseX <= currentEditMenuX + currentEditMenuW) {
                     uiConsumed = true;
-                    if (openEditUnitMenu >= 0 && mouseX >= editUnitMenuX && mouseX <= editUnitMenuX + editUnitMenuW
+                    if (isObjectPreviewOpen && isInside(mouseX, mouseY, previewBoxHit)) {
+                        isDraggingObjectPreview = true;
+                        previewLastMouseX = mouseX;
+                        previewLastMouseY = mouseY;
+                        openEditUnitMenu = -1;
+                    } else if (openEditUnitMenu >= 0 && mouseX >= editUnitMenuX && mouseX <= editUnitMenuX + editUnitMenuW
                             && mouseY >= editUnitMenuY && mouseY <= editUnitMenuY + editUnitMenuH) {
                         int chosenU = (int) ((mouseY - editUnitMenuY) / 16);
                         int maxU = (openEditUnitMenu == 4) ? 4 : (openEditUnitMenu == 3 ? 1 : 3);
@@ -495,7 +794,7 @@ public class SpaceInput {
                                 break;
                             }
                             if (i != 3 && mouseX >= unitBoxHits[i][0] && mouseX <= unitBoxHits[i][0] + unitBoxHits[i][2]
-                                    && mouseY >= unitBoxHits[i][1] && mouseY <= unitBoxHits[i][1] + unitBoxHits[i][3]) {
+                                    && mouseY >= editBoxHits[i][1] && mouseY <= unitBoxHits[i][1] + unitBoxHits[i][3]) {
                                 openEditUnitMenu = (openEditUnitMenu == i) ? -1 : i;
                                 break;
                             }
@@ -536,12 +835,10 @@ public class SpaceInput {
                     draggedPlanet = CameraManager.getRaycastHit();
                 } else if (isPlacingPlanet) {
                     if (currentSpawnMode == SpawnMode.ORBIT && !planets.isEmpty()) {
-                        Planet hitTarget = CameraManager.getRaycastHit();
                         if (orbitTarget == null || !planets.contains(orbitTarget)) {
-                            orbitTarget = (hitTarget != null) ? hitTarget : findDefaultOrbitTarget();
-                        } else if (hitTarget != null && hitTarget != orbitTarget) {
-                            orbitTarget = hitTarget;
-                        } else {
+                            orbitTarget = findDefaultOrbitTarget();
+                        }
+                        if (orbitTarget != null) {
                             MenuItem item = menuItems[selectedPlanetIndex];
                             baseOrbitPos.set(getHologramPos(item.radius));
                             orbitInclination = 0.0;
@@ -566,12 +863,19 @@ public class SpaceInput {
             if (isDraggingFpsOverlay) {
                 fpsOverlayX = (int) Math.round(mouseX - fpsDragOffsetX);
                 fpsOverlayY = (int) Math.round(mouseY - fpsDragOffsetY);
+            } else if (isDraggingObjectPreview) {
+                objectPreviewYaw += (float) (mouseX - previewLastMouseX) * 0.85f;
+                objectPreviewPitch = Math.max(-89.0f, Math.min(89.0f, objectPreviewPitch + (float) (mouseY - previewLastMouseY) * 0.85f));
+                previewLastMouseX = mouseX;
+                previewLastMouseY = mouseY;
             } else if (isDraggingFsrCube) {
                 updateFsrFromMouse(mouseX);
             } else if (isDraggingShaderCube) {
                 updateShaderFromMouse(mouseX);
             } else if (isDraggingParticleCube) {
                 updateParticleFromMouse(mouseX);
+            } else if (isDraggingPhysicsModeCube) {
+                updatePhysicsModeFromMouse(mouseX);
             } else if (isDraggingVolumeCube) {
                 updateVolumeFromMouse(mouseX);
             } else if (isDraggingOrbit && orbitTarget != null) {
@@ -594,9 +898,11 @@ public class SpaceInput {
             isDraggingOrbit = false;
             draggedPlanet = null;
             isDraggingFpsOverlay = false;
+            isDraggingObjectPreview = false;
             isDraggingFsrCube = false;
             isDraggingShaderCube = false;
             isDraggingParticleCube = false;
+            isDraggingPhysicsModeCube = false;
             isDraggingVolumeCube = false;
         }
 

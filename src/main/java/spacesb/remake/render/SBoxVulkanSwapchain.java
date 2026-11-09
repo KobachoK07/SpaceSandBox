@@ -65,6 +65,9 @@ public class SBoxVulkanSwapchain {
             VkSurfaceCapabilitiesKHR capabilities = VkSurfaceCapabilitiesKHR.calloc(stack);
             vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, surface, capabilities);
 
+            int clampedW = Math.max(capabilities.minImageExtent().width(), Math.min(capabilities.maxImageExtent().width(), width));
+            int clampedH = Math.max(capabilities.minImageExtent().height(), Math.min(capabilities.maxImageExtent().height(), height));
+
             int minImageCount = SpaceEngine.vsyncEnabled ? Math.max(2, capabilities.minImageCount()) : (capabilities.minImageCount() + 1);
             if (capabilities.maxImageCount() > 0 && minImageCount > capabilities.maxImageCount()) {
                 minImageCount = capabilities.maxImageCount();
@@ -97,7 +100,7 @@ public class SBoxVulkanSwapchain {
                     .minImageCount(minImageCount)
                     .imageFormat(VK_FORMAT_B8G8R8A8_UNORM)
                     .imageColorSpace(VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
-                    .imageExtent(it -> it.width(width).height(height))
+                    .imageExtent(it -> it.width(clampedW).height(clampedH))
                     .imageArrayLayers(1)
                     .imageUsage(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT)
                     .preTransform(capabilities.currentTransform())

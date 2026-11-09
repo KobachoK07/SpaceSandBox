@@ -21,23 +21,31 @@ public class CameraManager {
     private static double lastKeyTime = GLFW.glfwGetTime();
 
     private static final Vector3d SCRATCH_FWD = new Vector3d();
+    private static final Vector3d SCRATCH_RAW_FWD = new Vector3d();
     private static final Vector3d SCRATCH_RIGHT = new Vector3d();
     private static final Vector3d SCRATCH_PUSH = new Vector3d();
     private static final Vector3d SCRATCH_TARGET = new Vector3d();
     private static final Vector3d SCRATCH_REL = new Vector3d();
 
+    private static final Vector3f SCRATCH_RAY_OUT = new Vector3f();
+    private static final Vector3f SCRATCH_RAW_RAY_OUT = new Vector3f();
+    private static final float[] SCRATCH_UV = new float[2];
+    private static final int[] SCRATCH_W = new int[1], SCRATCH_H = new int[1];
+    private static final double[] SCRATCH_MX = new double[1], SCRATCH_MY = new double[1];
+    private static final Matrix4f SCRATCH_PROJ = new Matrix4f();
+    private static final Matrix4f SCRATCH_VIEW = new Matrix4f();
+
     public static boolean isRotating() { return isRotating; }
 
     public static Matrix4f getProjectionMatrix() {
         long window = SpaceEngine.windowHandle != 0 ? SpaceEngine.windowHandle : GLFW.glfwGetCurrentContext();
-        int[] w = new int[1], h = new int[1];
-        if (window != 0) GLFW.glfwGetFramebufferSize(window, w, h);
-        float aspect = (h[0] > 0) ? (float) w[0] / (float) h[0] : (16.0f / 9.0f);
-        return new Matrix4f().setPerspective((float) Math.toRadians(70), aspect, 0.1f, Float.POSITIVE_INFINITY);
+        if (window != 0) GLFW.glfwGetFramebufferSize(window, SCRATCH_W, SCRATCH_H);
+        float aspect = (SCRATCH_H[0] > 0) ? (float) SCRATCH_W[0] / (float) SCRATCH_H[0] : (16.0f / 9.0f);
+        return SCRATCH_PROJ.setPerspective((float) Math.toRadians(70), aspect, 0.1f, Float.POSITIVE_INFINITY);
     }
 
     public static Matrix4f getViewMatrix() {
-        return new Matrix4f()
+        return SCRATCH_VIEW.identity()
                 .rotateX((float) Math.toRadians(rot.x))
                 .rotateY((float) Math.toRadians(rot.y))
                 .translate((float) -pos.x, (float) -pos.y, (float) -pos.z);
@@ -140,7 +148,7 @@ public class CameraManager {
 
     public static void handleLeftClick() {
         double currentTime = GLFW.glfwGetTime();
-        if (currentTime - lastLeftClickTime < 0.3) {
+        if (currentTime - lastLeftClickTime < 0.35) {
             SpaceEngine.Planet hit = getRaycastHit();
             if (hit != null) {
                 isLocked = true;
@@ -154,19 +162,55 @@ public class CameraManager {
     }
 
     public static SpaceEngine.Planet getRaycastHit() {
-        Vector3f rayDirF = getMouseRay();
-        SCRATCH_FWD.set(rayDirF.x, rayDirF.y, rayDirF.z);
+        Vector3f rawRayF = getRawMouseRay();
+        SCRATCH_RAW_FWD.set(rawRayF.x, rawRayF.y, rawRayF.z);
+
+        double pitchD = Math.toRadians(rot.x), yawD = Math.toRadians(rot.y);
+        SCRATCH_FWD.set(-Math.sin(yawD) * Math.cos(pitchD), -Math.sin(pitchD), -Math.cos(yawD) * Math.cos(pitchD)).normalize();
+        SCRATCH_RIGHT.set(SCRATCH_FWD).cross(0, 1, 0).normalize();
+        SCRATCH_PUSH.set(SCRATCH_RIGHT).cross(SCRATCH_FWD).normalize();
+
+        long window = SpaceEngine.windowHandle != 0 ? SpaceEngine.windowHandle : GLFW.glfwGetCurrentContext();
+        if (window != 0) {
+            GLFW.glfwGetWindowSize(window, SCRATCH_W, SCRATCH_H);
+            GLFW.glfwGetCursorPos(window, SCRATCH_MX, SCRATCH_MY);
+        }
+        if (SCRATCH_W[0] <= 0 || SCRATCH_H[0] <= 0) { SCRATCH_W[0] = 1920; SCRATCH_H[0] = 1080; }
+        float uv0 = (float) ((SCRATCH_MX[0] - 0.5 * SCRATCH_W[0]) / SCRATCH_H[0]);
+        float uv1 = (float) ((SCRATCH_MY[0] - 0.5 * SCRATCH_H[0]) / SCRATCH_H[0]);
+
         SpaceEngine.Planet hit = null;
         double minDist = Double.MAX_VALUE;
 
         for (int i = 0, sz = SpaceEngine.planets.size(); i < sz; i++) {
             SpaceEngine.Planet p = SpaceEngine.planets.get(i);
+            if (p == null || p.mass <= 0.0) continue;
             SCRATCH_REL.set(p.pos).sub(pos);
             double distToCenter = SCRATCH_REL.length();
-            double b = SCRATCH_REL.dot(SCRATCH_FWD);
+
+            boolean isHole = "Hole".equals(p.type);
+            Vector3d testRay;
+            if (isHole || SpaceEngine.shaderMode >= 2) {
+                testRay = SCRATCH_RAW_FWD;
+            } else {
+                double pViewZ = SCRATCH_REL.dot(SCRATCH_FWD);
+                SCRATCH_UV[0] = uv0;
+                SCRATCH_UV[1] = uv1;
+                applyLensWarpToUv(SCRATCH_UV, pViewZ, pos, SCRATCH_FWD, SCRATCH_RIGHT, SCRATCH_PUSH);
+                SCRATCH_TARGET.set(
+                        SCRATCH_FWD.x + SCRATCH_UV[0] * SCRATCH_RIGHT.x - SCRATCH_UV[1] * SCRATCH_PUSH.x,
+                        SCRATCH_FWD.y + SCRATCH_UV[0] * SCRATCH_RIGHT.y - SCRATCH_UV[1] * SCRATCH_PUSH.y,
+                        SCRATCH_FWD.z + SCRATCH_UV[0] * SCRATCH_RIGHT.z - SCRATCH_UV[1] * SCRATCH_PUSH.z
+                ).normalize();
+                testRay = SCRATCH_TARGET;
+            }
+
+            double b = SCRATCH_REL.dot(testRay);
             if (b <= 0) continue;
 
-            double pickRadius = Math.max(p.radius * 1.45, distToCenter * 0.018);
+            double pickRadius = isHole
+                    ? Math.max(p.radius * 2.25, distToCenter * 0.028)
+                    : Math.max(p.radius * 1.45, distToCenter * 0.018);
             double c = SCRATCH_REL.lengthSquared() - pickRadius * pickRadius;
             double det = b * b - c;
             if (det >= 0) {
@@ -185,38 +229,48 @@ public class CameraManager {
         SCRATCH_FWD.set(rayDirF.x, rayDirF.y, rayDirF.z);
         int removedCount = 0;
 
-        for (int i = SpaceEngine.fragments.size() - 1; i >= 0; i--) {
+        int fWrite = 0;
+        for (int i = 0, sz = SpaceEngine.fragments.size(); i < sz; i++) {
             SpaceEngine.Fragment f = SpaceEngine.fragments.get(i);
-            if (f == null) continue;
+            if (f == null || f.life <= 0.0) continue;
             SCRATCH_REL.set(f.pos).sub(pos);
             double distToCenter = SCRATCH_REL.length();
             double b = SCRATCH_REL.dot(SCRATCH_FWD);
-            if (b <= 0) continue;
-
-            double pickRadius = Math.max(f.size * 1.85, distToCenter * 0.022);
-            double perpSq = SCRATCH_REL.lengthSquared() - b * b;
-            if (perpSq <= pickRadius * pickRadius) {
-                f.life = -1.0;
-                SpaceEngine.fragments.remove(i);
-                removedCount++;
+            if (b > 0) {
+                double pickRadius = Math.max(f.size * 1.85, distToCenter * 0.022);
+                if (SCRATCH_REL.lengthSquared() - b * b <= pickRadius * pickRadius) {
+                    f.life = -1.0;
+                    removedCount++;
+                    continue;
+                }
             }
+            if (fWrite != i) SpaceEngine.fragments.set(fWrite, f);
+            fWrite++;
+        }
+        if (fWrite < SpaceEngine.fragments.size()) {
+            SpaceEngine.fragments.subList(fWrite, SpaceEngine.fragments.size()).clear();
         }
 
-        for (int i = SpaceEngine.particles.size() - 1; i >= 0; i--) {
+        int pWrite = 0;
+        for (int i = 0, sz = SpaceEngine.particles.size(); i < sz; i++) {
             SpaceEngine.Particle pt = SpaceEngine.particles.get(i);
-            if (pt == null) continue;
+            if (pt == null || pt.life <= 0.0) continue;
             SCRATCH_REL.set(pt.pos).sub(pos);
             double distToCenter = SCRATCH_REL.length();
             double b = SCRATCH_REL.dot(SCRATCH_FWD);
-            if (b <= 0) continue;
-
-            double pickRadius = Math.max(pt.size * 2.4, distToCenter * 0.024);
-            double perpSq = SCRATCH_REL.lengthSquared() - b * b;
-            if (perpSq <= pickRadius * pickRadius) {
-                pt.life = -1.0;
-                SpaceEngine.particles.remove(i);
-                removedCount++;
+            if (b > 0) {
+                double pickRadius = Math.max(pt.size * 2.4, distToCenter * 0.024);
+                if (SCRATCH_REL.lengthSquared() - b * b <= pickRadius * pickRadius) {
+                    pt.life = -1.0;
+                    removedCount++;
+                    continue;
+                }
             }
+            if (pWrite != i) SpaceEngine.particles.set(pWrite, pt);
+            pWrite++;
+        }
+        if (pWrite < SpaceEngine.particles.size()) {
+            SpaceEngine.particles.subList(pWrite, SpaceEngine.particles.size()).clear();
         }
         return removedCount;
     }
@@ -237,17 +291,16 @@ public class CameraManager {
         }
 
         if (isRotating) {
-            double[] xpos = new double[1], ypos = new double[1];
-            GLFW.glfwGetCursorPos(window, xpos, ypos);
+            GLFW.glfwGetCursorPos(window, SCRATCH_MX, SCRATCH_MY);
             if (firstMouse) {
-                lastMouseX = xpos[0];
-                lastMouseY = ypos[0];
+                lastMouseX = SCRATCH_MX[0];
+                lastMouseY = SCRATCH_MY[0];
                 firstMouse = false;
             }
-            rot.y -= (float) (xpos[0] - lastMouseX) * 0.15f;
-            rot.x = Math.max(-89.0f, Math.min(89.0f, rot.x + (float) (ypos[0] - lastMouseY) * 0.15f));
-            lastMouseX = xpos[0];
-            lastMouseY = ypos[0];
+            rot.y -= (float) (SCRATCH_MX[0] - lastMouseX) * 0.15f;
+            rot.x = Math.max(-89.0f, Math.min(89.0f, rot.x + (float) (SCRATCH_MY[0] - lastMouseY) * 0.15f));
+            lastMouseX = SCRATCH_MX[0];
+            lastMouseY = SCRATCH_MY[0];
         }
     }
 
@@ -280,31 +333,51 @@ public class CameraManager {
         return t * t * (3.0f - 2.0f * t);
     }
 
+    public static float computeLensDepthWeight(double pointViewZ, double bhViewZ, double bhR) {
+        if (pointViewZ <= bhViewZ) return 0.0f;
+        if (Double.isInfinite(pointViewZ)) return 1.0f;
+        double dz = pointViewZ - bhViewZ;
+        double span = bhViewZ * 0.45 + bhR * 3.5;
+        float s = smoothstep(0.0f, 1.0f, (float) (dz / Math.max(1e-4, span)));
+        return (float) (dz / Math.max(1e-4, pointViewZ)) * s;
+    }
+
     public static void applyLensWarpToUv(float[] uv, Vector3d camPos, Vector3d forward, Vector3d right, Vector3d up) {
+        applyLensWarpToUv(uv, Double.POSITIVE_INFINITY, camPos, forward, right, up);
+    }
+
+    public static void applyLensWarpToUv(float[] uv, double pointViewZ, Vector3d camPos, Vector3d forward, Vector3d right, Vector3d up) {
         if (SpaceEngine.shaderMode >= 2) return;
         for (int i = 0, sz = SpaceEngine.planets.size(); i < sz; i++) {
             SpaceEngine.Planet p = SpaceEngine.planets.get(i);
             if (p == null || p.mass <= 0.0 || !"Hole".equals(p.type)) continue;
 
-            double tx = p.pos.x - camPos.x, ty = p.pos.y - camPos.y, tz = p.pos.z - camPos.z;
-            double distSq = tx * tx + ty * ty + tz * tz;
-            if (distSq <= 0.01) continue;
+            double r = Math.max(p.radius, 0.05);
+            double rx = p.pos.x - camPos.x, ry = p.pos.y - camPos.y, rz = p.pos.z - camPos.z;
+            double bhViewZ = rx * forward.x + ry * forward.y + rz * forward.z;
+            float weight = computeLensDepthWeight(pointViewZ, bhViewZ, r);
+            if (weight <= 1e-5f) continue;
 
-            double invDist = 1.0 / Math.sqrt(distSq);
-            double viewZ = tx * forward.x + ty * forward.y + tz * forward.z;
-            if (viewZ * invDist < 0.15 || viewZ <= 0.1) continue;
+            double tx = rx / r, ty = ry / r, tz = rz / r;
+            double distSqN = tx * tx + ty * ty + tz * tz;
+            if (distSqN <= 1e-4) continue;
 
-            float ctrX = (float) ((tx * right.x + ty * right.y + tz * right.z) / viewZ);
-            float ctrY = (float) (-(tx * up.x + ty * up.y + tz * up.z) / viewZ);
-            float rs = (float) Math.min((p.radius / viewZ) * 1.75, 4.2);
+            double invDistN = 1.0 / Math.sqrt(distSqN);
+            double viewZN = bhViewZ / r;
+            if (viewZN * invDistN < 0.15 || viewZN <= 1e-4) continue;
+
+            float ctrX = (float) ((tx * right.x + ty * right.y + tz * right.z) / viewZN);
+            float ctrY = (float) (-(tx * up.x + ty * up.y + tz * up.z) / viewZN);
+            float rs = (float) Math.min((1.0 / viewZN) * 1.35, 3.2);
             if (rs <= 0.0f) continue;
 
             float px = uv[0] - ctrX, py = uv[1] - ctrY;
             float d = (float) Math.sqrt(px * px + py * py);
-            if (d > rs * 0.08f) {
-                float fade = 1.0f - smoothstep(rs * 0.65f, rs * 36.0f, d);
+            if (d > 1e-5f) {
+                float fade = 1.0f - smoothstep(rs * 0.55f, rs * 36.0f, d);
+                fade *= fade;
                 if (fade > 0.0f) {
-                    float pull = ((rs * rs * 4.6f) / Math.max(d, rs * 0.20f)) * fade;
+                    float pull = ((rs * rs * 2.8f * weight) / Math.max(d, rs * 0.18f)) * fade;
                     uv[0] -= (px / d) * pull;
                     uv[1] -= (py / d) * pull;
                 }
@@ -313,65 +386,127 @@ public class CameraManager {
     }
 
     public static void invertLensWarpUv(float[] uv, Vector3d camPos, Vector3d forward, Vector3d right, Vector3d up) {
+        invertLensWarpUv(uv, Double.POSITIVE_INFINITY, camPos, forward, right, up);
+    }
+
+    public static void invertLensWarpUv(float[] uv, double pointViewZ, Vector3d camPos, Vector3d forward, Vector3d right, Vector3d up) {
         if (SpaceEngine.shaderMode >= 2) return;
         for (int i = SpaceEngine.planets.size() - 1; i >= 0; i--) {
             SpaceEngine.Planet p = SpaceEngine.planets.get(i);
             if (p == null || p.mass <= 0.0 || !"Hole".equals(p.type)) continue;
 
-            double tx = p.pos.x - camPos.x, ty = p.pos.y - camPos.y, tz = p.pos.z - camPos.z;
-            double distSq = tx * tx + ty * ty + tz * tz;
-            if (distSq <= 0.01) continue;
+            double r = Math.max(p.radius, 0.05);
+            double rx = p.pos.x - camPos.x, ry = p.pos.y - camPos.y, rz = p.pos.z - camPos.z;
+            double bhViewZ = rx * forward.x + ry * forward.y + rz * forward.z;
+            float weight = computeLensDepthWeight(pointViewZ, bhViewZ, r);
+            if (weight <= 1e-5f) continue;
 
-            double invDist = 1.0 / Math.sqrt(distSq);
-            double viewZ = tx * forward.x + ty * forward.y + tz * forward.z;
-            if (viewZ * invDist < 0.15 || viewZ <= 0.1) continue;
+            double tx = rx / r, ty = ry / r, tz = rz / r;
+            double distSqN = tx * tx + ty * ty + tz * tz;
+            if (distSqN <= 1e-4) continue;
 
-            float ctrX = (float) ((tx * right.x + ty * right.y + tz * right.z) / viewZ);
-            float ctrY = (float) (-(tx * up.x + ty * up.y + tz * up.z) / viewZ);
-            float rs = (float) Math.min((p.radius / viewZ) * 1.75, 4.2);
+            double invDistN = 1.0 / Math.sqrt(distSqN);
+            double viewZN = bhViewZ / r;
+            if (viewZN * invDistN < 0.15 || viewZN <= 1e-4) continue;
+
+            float ctrX = (float) ((tx * right.x + ty * right.y + tz * right.z) / viewZN);
+            float ctrY = (float) (-(tx * up.x + ty * up.y + tz * up.z) / viewZN);
+            float rs = (float) Math.min((1.0 / viewZN) * 1.35, 3.2);
             if (rs <= 0.0f) continue;
 
+            float baseK = rs * rs * 2.8f * weight;
             float px = uv[0] - ctrX, py = uv[1] - ctrY;
             float dWarped = (float) Math.sqrt(px * px + py * py);
             if (dWarped > 1e-5f) {
-                float screenD = 0.5f * (dWarped + (float) Math.sqrt(dWarped * dWarped + 4.0f * rs * rs * 4.6f));
-                for (int iter = 0; iter < 5; iter++) {
-                    float fade = 1.0f - smoothstep(rs * 0.65f, rs * 36.0f, screenD);
-                    float k = rs * rs * 4.6f * Math.max(0.0f, fade);
-                    screenD = 0.5f * (dWarped + (float) Math.sqrt(dWarped * dWarped + 4.0f * k));
+                float screenD = 0.5f * (dWarped + (float) Math.sqrt(dWarped * dWarped + 4.0f * baseK));
+                for (int iter = 0; iter < 8; iter++) {
+                    float fade = 1.0f - smoothstep(rs * 0.55f, rs * 36.0f, screenD);
+                    fade *= fade;
+                    float k = baseK * Math.max(0.0f, fade);
+                    float denom = Math.max(screenD, rs * 0.18f);
+                    float fVal = (screenD - k / denom) - dWarped;
+                    float df = (screenD > rs * 0.18f) ? (1.0f + k / (screenD * screenD)) : 1.0f;
+                    screenD = Math.max(1e-5f, screenD - fVal / df);
                 }
                 uv[0] = ctrX + (px / dWarped) * screenD;
                 uv[1] = ctrY + (py / dWarped) * screenD;
+            } else {
+                uv[0] = ctrX + (float) Math.sqrt(baseK);
+                uv[1] = ctrY;
             }
         }
     }
 
+    public static Vector3f getRawMouseRay() {
+        long window = SpaceEngine.windowHandle != 0 ? SpaceEngine.windowHandle : GLFW.glfwGetCurrentContext();
+        if (window != 0) {
+            GLFW.glfwGetWindowSize(window, SCRATCH_W, SCRATCH_H);
+            GLFW.glfwGetCursorPos(window, SCRATCH_MX, SCRATCH_MY);
+        }
+        if (SCRATCH_W[0] <= 0 || SCRATCH_H[0] <= 0) { SCRATCH_W[0] = 1920; SCRATCH_H[0] = 1080; }
+
+        float uvX = (float) ((SCRATCH_MX[0] - 0.5 * SCRATCH_W[0]) / SCRATCH_H[0]);
+        float uvY = (float) ((SCRATCH_MY[0] - 0.5 * SCRATCH_H[0]) / SCRATCH_H[0]);
+
+        double pitchD = Math.toRadians(rot.x), yawD = Math.toRadians(rot.y);
+        SCRATCH_RAW_FWD.set(-Math.sin(yawD) * Math.cos(pitchD), -Math.sin(pitchD), -Math.cos(yawD) * Math.cos(pitchD)).normalize();
+        SCRATCH_RIGHT.set(SCRATCH_RAW_FWD).cross(0, 1, 0).normalize();
+        SCRATCH_PUSH.set(SCRATCH_RIGHT).cross(SCRATCH_RAW_FWD).normalize();
+
+        SCRATCH_RAW_RAY_OUT.set(
+                (float) (SCRATCH_RAW_FWD.x + uvX * SCRATCH_RIGHT.x - uvY * SCRATCH_PUSH.x),
+                (float) (SCRATCH_RAW_FWD.y + uvX * SCRATCH_RIGHT.y - uvY * SCRATCH_PUSH.y),
+                (float) (SCRATCH_RAW_FWD.z + uvX * SCRATCH_RIGHT.z - uvY * SCRATCH_PUSH.z)
+        ).normalize();
+        return SCRATCH_RAW_RAY_OUT;
+    }
+
     public static Vector3f getMouseRay() {
         long window = SpaceEngine.windowHandle != 0 ? SpaceEngine.windowHandle : GLFW.glfwGetCurrentContext();
-        int[] w = new int[1], h = new int[1];
-        double[] mx = new double[1], my = new double[1];
         if (window != 0) {
-            GLFW.glfwGetWindowSize(window, w, h);
-            GLFW.glfwGetCursorPos(window, mx, my);
+            GLFW.glfwGetWindowSize(window, SCRATCH_W, SCRATCH_H);
+            GLFW.glfwGetCursorPos(window, SCRATCH_MX, SCRATCH_MY);
         }
-        if (w[0] <= 0 || h[0] <= 0) { w[0] = 1920; h[0] = 1080; }
+        if (SCRATCH_W[0] <= 0 || SCRATCH_H[0] <= 0) { SCRATCH_W[0] = 1920; SCRATCH_H[0] = 1080; }
 
-        float[] uv = new float[]{
-                (float) ((mx[0] - 0.5 * w[0]) / h[0]),
-                (float) ((my[0] - 0.5 * h[0]) / h[0])
-        };
+        float uv0 = (float) ((SCRATCH_MX[0] - 0.5 * SCRATCH_W[0]) / SCRATCH_H[0]);
+        float uv1 = (float) ((SCRATCH_MY[0] - 0.5 * SCRATCH_H[0]) / SCRATCH_H[0]);
 
         double pitchD = Math.toRadians(rot.x), yawD = Math.toRadians(rot.y);
         SCRATCH_FWD.set(-Math.sin(yawD) * Math.cos(pitchD), -Math.sin(pitchD), -Math.cos(yawD) * Math.cos(pitchD)).normalize();
         SCRATCH_RIGHT.set(SCRATCH_FWD).cross(0, 1, 0).normalize();
         SCRATCH_PUSH.set(SCRATCH_RIGHT).cross(SCRATCH_FWD).normalize();
 
-        applyLensWarpToUv(uv, pos, SCRATCH_FWD, SCRATCH_RIGHT, SCRATCH_PUSH);
+        double minSafeDist = 10.0;
+        if (SpaceEngine.isPlacingPlanet && SpaceEngine.menuItems != null && SpaceEngine.selectedPlanetIndex < SpaceEngine.menuItems.length) {
+            minSafeDist = SpaceEngine.menuItems[SpaceEngine.selectedPlanetIndex].radius * 4.2 + 5.0;
+        }
 
-        Vector3f forward = new Vector3f((float) SCRATCH_FWD.x, (float) SCRATCH_FWD.y, (float) SCRATCH_FWD.z);
-        Vector3f right = new Vector3f((float) SCRATCH_RIGHT.x, (float) SCRATCH_RIGHT.y, (float) SCRATCH_RIGHT.z);
-        Vector3f up = new Vector3f((float) SCRATCH_PUSH.x, (float) SCRATCH_PUSH.y, (float) SCRATCH_PUSH.z);
+        float wx = uv0, wy = uv1;
+        for (int iter = 0; iter < 4; iter++) {
+            double dirX = SCRATCH_FWD.x + wx * SCRATCH_RIGHT.x - wy * SCRATCH_PUSH.x;
+            double dirY = SCRATCH_FWD.y + wx * SCRATCH_RIGHT.y - wy * SCRATCH_PUSH.y;
+            double dirZ = SCRATCH_FWD.z + wx * SCRATCH_RIGHT.z - wy * SCRATCH_PUSH.z;
+            double invLen = 1.0 / Math.sqrt(dirX * dirX + dirY * dirY + dirZ * dirZ);
+            dirX *= invLen; dirY *= invLen; dirZ *= invLen;
 
-        return forward.fma(uv[0], right).fma(-uv[1], up).normalize();
+            double tPlane = (dirY < -0.001) ? (-pos.y / dirY) : minSafeDist;
+            if (tPlane < minSafeDist) tPlane = minSafeDist;
+            double fwdDot = dirX * SCRATCH_FWD.x + dirY * SCRATCH_FWD.y + dirZ * SCRATCH_FWD.z;
+            double estViewZ = Math.max(0.1, tPlane * fwdDot);
+
+            SCRATCH_UV[0] = uv0;
+            SCRATCH_UV[1] = uv1;
+            applyLensWarpToUv(SCRATCH_UV, estViewZ, pos, SCRATCH_FWD, SCRATCH_RIGHT, SCRATCH_PUSH);
+            wx = SCRATCH_UV[0];
+            wy = SCRATCH_UV[1];
+        }
+
+        SCRATCH_RAY_OUT.set(
+                (float) (SCRATCH_FWD.x + wx * SCRATCH_RIGHT.x - wy * SCRATCH_PUSH.x),
+                (float) (SCRATCH_FWD.y + wx * SCRATCH_RIGHT.y - wy * SCRATCH_PUSH.y),
+                (float) (SCRATCH_FWD.z + wx * SCRATCH_RIGHT.z - wy * SCRATCH_PUSH.z)
+        ).normalize();
+        return SCRATCH_RAY_OUT;
     }
 }

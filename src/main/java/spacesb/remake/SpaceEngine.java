@@ -14,10 +14,15 @@ import spacesb.remake.render.SBoxVulkanCore;
 import spacesb.remake.render.SBoxVulkanSwapchain;
 import spacesb.remake.render.SBoxVulkanUI;
 
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.nio.DoubleBuffer;
 import java.nio.IntBuffer;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Properties;
 import java.util.concurrent.locks.LockSupport;
 
 import static org.lwjgl.vulkan.KHRSwapchain.*;
@@ -26,6 +31,14 @@ import static org.lwjgl.vulkan.VK10.*;
 public class SpaceEngine {
 
     public static final Object STATE_LOCK = new Object();
+    private static final File SETTINGS_FILE = new File("spacesb_settings.properties");
+    private static long lastSettingsHash = 0L;
+    private static long lastSettingsSaveMs = 0L;
+    private static boolean settingsDirty = false;
+
+    static {
+        Runtime.getRuntime().addShutdownHook(new Thread(SpaceEngine::saveSettings, "SBox-Settings-ShutdownSave"));
+    }
 
     public static final Comparator<Planet> WARP_GROUP_COMPARATOR =
             (a, b) -> Integer.compare(a.getWarpGroupKey(), b.getWarpGroupKey());
@@ -47,12 +60,13 @@ public class SpaceEngine {
     public static boolean enableCollisions = true;
     public static boolean showFpsOverlay = false;
     public static double lastPhysicsTickMs = 0;
+    public static int lastPhysicsSubSteps = 8;
     public static int currentFps = 60;
     public static double smoothedFrameMs = 16.6;
     public static int activeRenderW = 1920;
     public static int activeRenderH = 1080;
 
-    public static int fpsOverlayX = 285, fpsOverlayY = 12, fpsOverlayW = 325, fpsOverlayH = 112;
+    public static int fpsOverlayX = 260, fpsOverlayY = 12, fpsOverlayW = 480, fpsOverlayH = 178;
     public static boolean isDraggingFpsOverlay = false;
     public static double fpsDragOffsetX = 0, fpsDragOffsetY = 0;
 
@@ -92,13 +106,78 @@ public class SpaceEngine {
 
     public static boolean hdrEnabled = false;
     public static boolean vsyncEnabled = true;
-    private static int cachedMonitorRefreshRate = 60;
-    private static long lastRefreshQueryMs = 0L, nextFrameTargetNs = 0L;
+    private static long lastFrameSyncNs = System.nanoTime();
 
     public static int resolutionIndex = 2;
     public static final int[][] RESOLUTIONS = {{1280, 720}, {1600, 900}, {1920, 1080}, {2560, 1440}, {3840, 2160}};
     public static boolean isFullscreen = true, isResolutionMenuOpen = false;
     public static final int[] escResDropdownHit = new int[4];
+
+    public static boolean isVisualTabOpen = false;
+    public static boolean isPhysicsTabOpen = false;
+    public static boolean isMiscTabOpen = false;
+    public static double escMenuScrollY = 0.0;
+    public static int escMenuMaxScroll = 0;
+
+    // Меню «Симуляции» в ESC (Готовые и Сохранённые симуляции)
+    public static boolean isSimulationsMenuOpen = false;
+    public static double simMenuAnimProgress = 0.0;
+    public static int simMenuTab = 0; // 0 = Готовые симуляции, 1 = Сохранённые симуляции
+    public static int selectedPresetSimIndex = 0;
+    public static int selectedSavedSimIndex = 0;
+    public static double simListScrollY = 0.0;
+    public static int simListMaxScroll = 0;
+    public static boolean isRenamingSim = false;
+    public static int renamingSimIndex = -1;
+    public static String simRenameBuffer = "";
+    public static long lastSimItemClickMs = 0L;
+    public static int lastClickedSimItemIndex = -1;
+
+    public static final int[][] escSimSubTabHits = new int[2][4];
+    public static final int[] escSimNewSaveBtnHit = new int[4];
+    public static final int[][] escSimItemHits = new int[64][4];
+    public static final int[] escSimPresetLoadBtnHit = new int[4];
+    public static final int[][] escSimSavedBottomBtnHits = new int[4][4];
+
+    public static int physicsPrecisionMode = 2;
+    public static boolean isMathBitsMenuOpen = false;
+    public static final String[] MATH_BITS_OPTIONS = {"32 bit", "32+64 bit", "64 bit"};
+    public static final int[] escMathBitsBtnHit = new int[4];
+    public static final int[] escMathBitsDropdownHit = new int[4];
+
+    public static int physicsSimMode = 1;
+    public static float physicsModeSliderPos = 0.75f;
+    public static boolean isDraggingPhysicsModeCube = false;
+
+    public static boolean enableSaturnRings = true;
+    public static boolean enableAccretionDisk = false;
+    public static int uiColor1 = 0xFF050505;
+    public static int uiColor2 = 0xFFFFFFFF;
+    public static int openColorPicker = 0;
+
+    public static final int[] PALETTE_COLOR_1 = {
+            0xFF050505, 0xFF0B101C, 0xFF140B1D, 0xFF1D0A0E,
+            0xFF071A12, 0xFF1A1408, 0xFF08181E, 0xFF181818,
+            0xFF1F0F24, 0xFF0E1F14, 0xFF24120C, 0xFF101228,
+            0xFF24262C, 0xFF2B151D, 0xFF0D2426, 0xFF000000
+    };
+
+    public static final int[] PALETTE_COLOR_2 = {
+            0xFFFFFFFF, 0xFF55FF55, 0xFF44AAFF, 0xFFFF5555,
+            0xFFFFCC33, 0xFFCC55FF, 0xFF00FFCC, 0xFFFF7733,
+            0xFFFF44AA, 0xFF7788FF, 0xFFAADD44, 0xFF44FFFF,
+            0xFFFFAA88, 0xFFBBBBBB, 0xFF88FFAA, 0xFFFF2266
+    };
+
+    public static final int[] escVisualTabHit = new int[4];
+    public static final int[] escPhysicsTabHit = new int[4];
+    public static final int[] escMiscTabHit = new int[4];
+    public static final int[] escPhysicsModeTrackHit = new int[4];
+    public static final int[] escSaturnRingsHit = new int[4];
+    public static final int[] escAccretionDiskHit = new int[4];
+    public static final int[] escColor1Hit = new int[4];
+    public static final int[] escColor2Hit = new int[4];
+    public static final int[] escColorPopupHit = new int[4];
 
     public static final int[][] escTopBtnHits = new int[2][4];
     public static final int[][] escSettingHits = new int[9][4];
@@ -110,9 +189,166 @@ public class SpaceEngine {
     public static int openEditUnitMenu = -1;
     public static int editUnitMenuX, editUnitMenuY, editUnitMenuW, editUnitMenuH;
 
+    public static boolean isObjectPreviewOpen = true;
+    public static boolean isDraggingObjectPreview = false;
+    public static float objectPreviewYaw = -35.0f, objectPreviewPitch = 20.0f, objectPreviewZoom = 4.8f;
+    public static double previewLastMouseX = 0, previewLastMouseY = 0;
+    public static int viewBtnX, viewBtnY, viewBtnS = 20;
+    public static final int[] previewBoxHit = new int[4];
+    public static final float[] previewClipRectRender = new float[4];
+    public static final float[] previewCenterScaleRender = new float[4];
+    public static int lockedTargetShaderIdx = -1;
+
+    private static final Vector3d SCRATCH_HOLO = new Vector3d();
+    private static final Vector3d SCRATCH_DIR = new Vector3d();
+    private static final Vector3d SCRATCH_R = new Vector3d();
+    private static final Vector3d SCRATCH_AXIS = new Vector3d();
+    private static final Vector3d SCRATCH_RIGHT = new Vector3d();
+    private static final Vector3d SCRATCH_SPAWN_POS = new Vector3d();
+    private static final Vector3d SCRATCH_SPAWN_UP = new Vector3d();
+    private static final Vector3d SCRATCH_VEL_OUT = new Vector3d();
+
     public static int getMaxDebrisLimit() { return PhysicsEngine.getEffectiveDebrisLimit(); }
     public static double getDebrisSpawnMultiplier() { return PhysicsEngine.getEffectiveSpawnMultiplier(); }
     public static float getInternalRenderScale() { return fsrEnabled ? FSR_SCALES[fsrQualityIndex] : 1.0f; }
+
+    private static long computeSettingsHash() {
+        long h = 1125899906842597L;
+        h = 31L * h + (fsrEnabled ? 1 : 0);
+        h = 31L * h + fsrQualityIndex;
+        h = 31L * h + (hdrEnabled ? 1 : 0);
+        h = 31L * h + (vsyncEnabled ? 1 : 0);
+        h = 31L * h + resolutionIndex;
+        h = 31L * h + (isFullscreen ? 1 : 0);
+        h = 31L * h + (showFpsOverlay ? 1 : 0);
+        h = 31L * h + fpsOverlayX;
+        h = 31L * h + fpsOverlayY;
+        h = 31L * h + (photoModeFeatureEnabled ? 1 : 0);
+        h = 31L * h + shaderMode;
+        h = 31L * h + particlePreset;
+        h = 31L * h + Math.round(musicVolume * 1000.0f);
+        h = 31L * h + SpaceUI.currentLanguage;
+        h = 31L * h + (enableSaturnRings ? 1 : 0);
+        h = 31L * h + (enableAccretionDisk ? 1 : 0);
+        h = 31L * h + uiColor1;
+        h = 31L * h + uiColor2;
+        h = 31L * h + physicsPrecisionMode;
+        h = 31L * h + physicsSimMode;
+        h = 31L * h + (showGrid ? 1 : 0);
+        h = 31L * h + (SpaceUI.showGravityGrid ? 1 : 0);
+        h = 31L * h + (showTrails ? 1 : 0);
+        h = 31L * h + (SpaceUI.showHabitableZone ? 1 : 0);
+        h = 31L * h + (physicsEnabled ? 1 : 0);
+        h = 31L * h + (isObjectPreviewOpen ? 1 : 0);
+        return h;
+    }
+
+    public static synchronized void saveSettings() {
+        try {
+            Properties props = new Properties();
+            props.setProperty("fsrEnabled", String.valueOf(fsrEnabled));
+            props.setProperty("fsrQualityIndex", String.valueOf(fsrQualityIndex));
+            props.setProperty("hdrEnabled", String.valueOf(hdrEnabled));
+            props.setProperty("vsyncEnabled", String.valueOf(vsyncEnabled));
+            props.setProperty("resolutionIndex", String.valueOf(resolutionIndex));
+            props.setProperty("isFullscreen", String.valueOf(isFullscreen));
+            props.setProperty("showFpsOverlay", String.valueOf(showFpsOverlay));
+            props.setProperty("fpsOverlayX", String.valueOf(fpsOverlayX));
+            props.setProperty("fpsOverlayY", String.valueOf(fpsOverlayY));
+            props.setProperty("photoModeFeatureEnabled", String.valueOf(photoModeFeatureEnabled));
+            props.setProperty("shaderMode", String.valueOf(shaderMode));
+            props.setProperty("particlePreset", String.valueOf(particlePreset));
+            props.setProperty("musicVolume", String.valueOf(musicVolume));
+            props.setProperty("language", String.valueOf(SpaceUI.currentLanguage));
+            props.setProperty("enableSaturnRings", String.valueOf(enableSaturnRings));
+            props.setProperty("enableAccretionDisk", String.valueOf(enableAccretionDisk));
+            props.setProperty("uiColor1", String.valueOf(uiColor1));
+            props.setProperty("uiColor2", String.valueOf(uiColor2));
+            props.setProperty("physicsPrecisionMode", String.valueOf(physicsPrecisionMode));
+            props.setProperty("physicsSimMode", String.valueOf(physicsSimMode));
+            props.setProperty("showGrid", String.valueOf(showGrid));
+            props.setProperty("showGravityGrid", String.valueOf(SpaceUI.showGravityGrid));
+            props.setProperty("showTrails", String.valueOf(showTrails));
+            props.setProperty("showHabitableZone", String.valueOf(SpaceUI.showHabitableZone));
+            props.setProperty("physicsEnabled", String.valueOf(physicsEnabled));
+            props.setProperty("isObjectPreviewOpen", String.valueOf(isObjectPreviewOpen));
+            try (FileOutputStream fos = new FileOutputStream(SETTINGS_FILE)) {
+                props.store(fos, "Space SandBox Settings");
+            }
+            settingsDirty = false;
+            lastSettingsSaveMs = System.currentTimeMillis();
+        } catch (Exception ignored) {}
+    }
+
+    public static synchronized void loadSettings() {
+        if (!SETTINGS_FILE.exists()) {
+            lastSettingsHash = computeSettingsHash();
+            return;
+        }
+        try (FileInputStream fis = new FileInputStream(SETTINGS_FILE)) {
+            Properties props = new Properties();
+            props.load(fis);
+
+            fsrEnabled = Boolean.parseBoolean(props.getProperty("fsrEnabled", String.valueOf(fsrEnabled)));
+            fsrQualityIndex = Math.max(0, Math.min(3, Integer.parseInt(props.getProperty("fsrQualityIndex", String.valueOf(fsrQualityIndex)))));
+            fsrSliderPos = (fsrQualityIndex + 0.5f) / 4.0f;
+
+            hdrEnabled = Boolean.parseBoolean(props.getProperty("hdrEnabled", String.valueOf(hdrEnabled)));
+            vsyncEnabled = Boolean.parseBoolean(props.getProperty("vsyncEnabled", String.valueOf(vsyncEnabled)));
+            resolutionIndex = Math.max(0, Math.min(RESOLUTIONS.length - 1, Integer.parseInt(props.getProperty("resolutionIndex", String.valueOf(resolutionIndex)))));
+            isFullscreen = Boolean.parseBoolean(props.getProperty("isFullscreen", String.valueOf(isFullscreen)));
+
+            showFpsOverlay = Boolean.parseBoolean(props.getProperty("showFpsOverlay", String.valueOf(showFpsOverlay)));
+            fpsOverlayX = Integer.parseInt(props.getProperty("fpsOverlayX", String.valueOf(fpsOverlayX)));
+            fpsOverlayY = Integer.parseInt(props.getProperty("fpsOverlayY", String.valueOf(fpsOverlayY)));
+            photoModeFeatureEnabled = Boolean.parseBoolean(props.getProperty("photoModeFeatureEnabled", String.valueOf(photoModeFeatureEnabled)));
+
+            shaderMode = Math.max(0, Math.min(2, Integer.parseInt(props.getProperty("shaderMode", String.valueOf(shaderMode)))));
+            shaderSliderPos = (shaderMode == 2) ? 0.166f : (shaderMode == 1 ? 0.5f : 0.833f);
+
+            particlePreset = Math.max(0, Math.min(3, Integer.parseInt(props.getProperty("particlePreset", String.valueOf(particlePreset)))));
+            particleSliderPos = (particlePreset + 0.5f) / 4.0f;
+
+            musicVolume = Math.max(0.0f, Math.min(1.0f, Float.parseFloat(props.getProperty("musicVolume", String.valueOf(musicVolume)))));
+            SpaceUI.currentLanguage = Math.max(0, Math.min(SpaceUI.LANGUAGE_NAMES.length - 1, Integer.parseInt(props.getProperty("language", String.valueOf(SpaceUI.currentLanguage)))));
+
+            enableSaturnRings = Boolean.parseBoolean(props.getProperty("enableSaturnRings", String.valueOf(enableSaturnRings)));
+            enableAccretionDisk = Boolean.parseBoolean(props.getProperty("enableAccretionDisk", String.valueOf(enableAccretionDisk)));
+            uiColor1 = Integer.parseInt(props.getProperty("uiColor1", String.valueOf(uiColor1)));
+            uiColor2 = Integer.parseInt(props.getProperty("uiColor2", String.valueOf(uiColor2)));
+
+            int savedPrec = Integer.parseInt(props.getProperty("physicsPrecisionMode", String.valueOf(physicsPrecisionMode)));
+            physicsPrecisionMode = (!SBoxVulkanCore.supportsFp64 && savedPrec == 2) ? 1 : Math.max(0, Math.min(2, savedPrec));
+
+            physicsSimMode = Math.max(0, Math.min(1, Integer.parseInt(props.getProperty("physicsSimMode", String.valueOf(physicsSimMode)))));
+            physicsModeSliderPos = (physicsSimMode == 0) ? 0.25f : 0.75f;
+
+            showGrid = Boolean.parseBoolean(props.getProperty("showGrid", String.valueOf(showGrid)));
+            SpaceUI.showGravityGrid = Boolean.parseBoolean(props.getProperty("showGravityGrid", String.valueOf(SpaceUI.showGravityGrid)));
+            if (showGrid && SpaceUI.showGravityGrid) showGrid = false;
+
+            showTrails = Boolean.parseBoolean(props.getProperty("showTrails", String.valueOf(showTrails)));
+            SpaceUI.showHabitableZone = Boolean.parseBoolean(props.getProperty("showHabitableZone", String.valueOf(SpaceUI.showHabitableZone)));
+            physicsEnabled = Boolean.parseBoolean(props.getProperty("physicsEnabled", String.valueOf(physicsEnabled)));
+            isObjectPreviewOpen = Boolean.parseBoolean(props.getProperty("isObjectPreviewOpen", String.valueOf(isObjectPreviewOpen)));
+        } catch (Exception ignored) {}
+        lastSettingsHash = computeSettingsHash();
+    }
+
+    private static void checkAndAutoSaveSettings() {
+        long curHash = computeSettingsHash();
+        if (curHash != lastSettingsHash) {
+            lastSettingsHash = curHash;
+            settingsDirty = true;
+        }
+        if (settingsDirty && !isDraggingFsrCube && !isDraggingShaderCube && !isDraggingParticleCube
+                && !isDraggingPhysicsModeCube && !isDraggingVolumeCube && !isDraggingFpsOverlay) {
+            long now = System.currentTimeMillis();
+            if (now - lastSettingsSaveMs >= 300L) {
+                saveSettings();
+            }
+        }
+    }
 
     public static float[] buildFlatUv(float[][] uv) {
         float[] flat = new float[24];
@@ -235,6 +471,7 @@ public class SpaceEngine {
         public double size, life, maxLife, mass, temperature, angle, rotSpeed;
         public String tex;
         public float u1, v1, u2, v2;
+        public boolean isSaturnRing = false;
 
         public Fragment() {}
         public Fragment(Vector3d pos, Vector3d vel, double size, double life, double mass, double temperature, String tex, float u1, float v1, float u2, float v2) {
@@ -248,6 +485,7 @@ public class SpaceEngine {
             this.u1 = u0; this.v1 = v0; this.u2 = u1_; this.v2 = v1_;
             this.angle = Math.random() * 360.0;
             this.rotSpeed = Math.random() * 360.0 - 180.0;
+            this.isSaturnRing = false;
         }
     }
 
@@ -297,8 +535,8 @@ public class SpaceEngine {
     }
 
     public static final List<Planet> planets = new ArrayList<>();
-    public static final List<Particle> particles = new ArrayList<>();
-    public static final List<Fragment> fragments = new ArrayList<>();
+    public static final List<Particle> particles = new ArrayList<>(PhysicsEngine.MAX_GPU_DEBRIS);
+    public static final List<Fragment> fragments = new ArrayList<>(PhysicsEngine.MAX_GPU_DEBRIS);
 
     public static volatile double simTimeSeconds = 0;
     public static double timeScale = 1.0;
@@ -351,7 +589,7 @@ public class SpaceEngine {
     public static long lastScrollTime = 0;
 
     public static boolean isOverlappingAnyPlanet(Vector3d pos, double radius) {
-        for (int i = 0; i < planets.size(); i++) {
+        for (int i = 0, sz = planets.size(); i < sz; i++) {
             Planet p = planets.get(i);
             if (p == null || p.mass <= 0.0) continue;
             double minAllowedDist = (radius + p.radius) * 1.15;
@@ -369,14 +607,12 @@ public class SpaceEngine {
             int w = (mode != null) ? mode.width() : res[0];
             int h = (mode != null) ? mode.height() : res[1];
             int rate = (mode != null) ? mode.refreshRate() : 60;
-            cachedMonitorRefreshRate = Math.max(30, rate);
             GLFW.glfwSetWindowMonitor(window, monitor, 0, 0, w, h, rate);
         } else {
             int posX = 80, posY = 50;
             if (monitor != 0) {
                 GLFWVidMode mode = GLFW.glfwGetVideoMode(monitor);
                 if (mode != null) {
-                    cachedMonitorRefreshRate = Math.max(30, mode.refreshRate());
                     posX = Math.max(0, (mode.width() - res[0]) / 2);
                     posY = Math.max(28, (mode.height() - res[1]) / 2);
                 }
@@ -387,45 +623,33 @@ public class SpaceEngine {
         needsSwapchainRecreate = true;
     }
 
-    private static void syncToMonitorRefreshRate() {
-        if (!vsyncEnabled) {
-            nextFrameTargetNs = 0L;
-            return;
-        }
-        long nowMs = System.currentTimeMillis();
-        if (nowMs - lastRefreshQueryMs > 3000L) {
-            lastRefreshQueryMs = nowMs;
-            try {
-                long monitor = GLFW.glfwGetPrimaryMonitor();
-                if (monitor != 0L) {
-                    GLFWVidMode mode = GLFW.glfwGetVideoMode(monitor);
-                    if (mode != null && mode.refreshRate() >= 30) cachedMonitorRefreshRate = mode.refreshRate();
-                }
-            } catch (Throwable ignored) {}
-        }
-
-        long frameIntervalNs = 1_000_000_000L / Math.max(30, cachedMonitorRefreshRate);
-        long nowNs = System.nanoTime();
-        if (nextFrameTargetNs <= 0L || nowNs - nextFrameTargetNs > frameIntervalNs * 4L) {
-            nextFrameTargetNs = nowNs + frameIntervalNs;
-            return;
-        }
-
-        while (true) {
-            long remainingNs = nextFrameTargetNs - System.nanoTime();
-            if (remainingNs <= 0L) break;
-            if (remainingNs > 1_500_000L) LockSupport.parkNanos(remainingNs - 1_000_000L);
-            else Thread.onSpinWait();
-        }
-        nextFrameTargetNs += frameIntervalNs;
-    }
-
     public static void adjustSpeed(double vertical) {
         if (isAddMenuOpen && !isPhotoModeActive) {
             menuScrollY = Math.max(0.0, menuScrollY - vertical * 22.0);
             return;
         }
         if (CameraManager.isLocked && CameraManager.lockedTarget != null) {
+            if (!isEditMenuMinimized && isObjectPreviewOpen && previewBoxHit[2] > 0 && previewBoxHit[3] > 0 && windowHandle != 0L) {
+                try (MemoryStack stack = MemoryStack.stackPush()) {
+                    DoubleBuffer mx = stack.mallocDouble(1), my = stack.mallocDouble(1);
+                    IntBuffer ww = stack.mallocInt(1), wh = stack.mallocInt(1);
+                    IntBuffer fw = stack.mallocInt(1), fh = stack.mallocInt(1);
+                    GLFW.glfwGetCursorPos(windowHandle, mx, my);
+                    GLFW.glfwGetWindowSize(windowHandle, ww, wh);
+                    GLFW.glfwGetFramebufferSize(windowHandle, fw, fh);
+                    int uiScale = Math.max(1, fh.get(0) / 480);
+                    double logW = (double) fw.get(0) / uiScale;
+                    double logH = (double) fh.get(0) / uiScale;
+                    double curX = mx.get(0) * (logW / Math.max(1, ww.get(0)));
+                    double curY = my.get(0) * (logH / Math.max(1, wh.get(0)));
+                    if (curX >= previewBoxHit[0] && curX <= previewBoxHit[0] + previewBoxHit[2]
+                            && curY >= previewBoxHit[1] && curY <= previewBoxHit[1] + previewBoxHit[3]) {
+                        if (vertical > 0) objectPreviewZoom = Math.max(2.0f, objectPreviewZoom / 1.14f);
+                        else if (vertical < 0) objectPreviewZoom = Math.min(24.0f, objectPreviewZoom * 1.14f);
+                        return;
+                    }
+                }
+            }
             if (targetOrbitDistance < 0) targetOrbitDistance = CameraManager.lockedTarget.radius * 4.0;
             if (vertical > 0) targetOrbitDistance = Math.max(CameraManager.lockedTarget.radius * 1.85 + 0.5, targetOrbitDistance / 1.18);
             else if (vertical < 0) targetOrbitDistance *= 1.18;
@@ -437,28 +661,28 @@ public class SpaceEngine {
     }
 
     public static void getInclinedOrbitState(Vector3d baseP, double inclination, Planet target, Vector3d outPos, Vector3d outUp) {
-        Vector3d R = new Vector3d(baseP).sub(target.pos);
-        if (R.lengthSquared() < 0.001) { outPos.set(baseP); outUp.set(0, 1, 0); return; }
-        Vector3d axis = new Vector3d(R).cross(0, 1, 0);
-        if (axis.lengthSquared() < 0.001) axis.set(1, 0, 0); else axis.normalize();
-        Vector3d rotR = new Vector3d(R).rotateAxis(inclination, axis.x, axis.y, axis.z);
-        outPos.set(target.pos).add(rotR);
-        outUp.set(0, 1, 0).rotateAxis(inclination, axis.x, axis.y, axis.z);
+        SCRATCH_R.set(baseP).sub(target.pos);
+        if (SCRATCH_R.lengthSquared() < 0.001) { outPos.set(baseP); outUp.set(0, 1, 0); return; }
+        SCRATCH_AXIS.set(SCRATCH_R).cross(0, 1, 0);
+        if (SCRATCH_AXIS.lengthSquared() < 0.001) SCRATCH_AXIS.set(1, 0, 0); else SCRATCH_AXIS.normalize();
+        SCRATCH_R.rotateAxis(inclination, SCRATCH_AXIS.x, SCRATCH_AXIS.y, SCRATCH_AXIS.z);
+        outPos.set(target.pos).add(SCRATCH_R);
+        outUp.set(0, 1, 0).rotateAxis(inclination, SCRATCH_AXIS.x, SCRATCH_AXIS.y, SCRATCH_AXIS.z);
     }
 
     public static Vector3d getHologramPos(double radius) {
         CameraManager.ensureFitsOnScreen(radius);
         Vector3f rayF = CameraManager.getMouseRay();
-        Vector3d dir = new Vector3d(rayF.x, rayF.y, rayF.z);
+        SCRATCH_DIR.set(rayF.x, rayF.y, rayF.z);
         if (isPlacingPlanet && currentSpawnMode == SpawnMode.LAUNCH) {
-            return new Vector3d(CameraManager.pos).add(dir.mul(radius * 3.8 + 8.0));
+            return SCRATCH_HOLO.set(CameraManager.pos).fma(radius * 3.8 + 8.0, SCRATCH_DIR);
         }
         double minSafeDist = radius * 4.2 + 5.0;
-        double t = (dir.y < -0.001) ? -CameraManager.pos.y / dir.y : minSafeDist;
+        double t = (SCRATCH_DIR.y < -0.001) ? -CameraManager.pos.y / SCRATCH_DIR.y : minSafeDist;
         if (t < minSafeDist) t = minSafeDist;
-        Vector3d pos = new Vector3d(CameraManager.pos).add(dir.mul(t));
-        pos.y = 0.0;
-        return pos;
+        SCRATCH_HOLO.set(CameraManager.pos).fma(t, SCRATCH_DIR);
+        SCRATCH_HOLO.y = 0.0;
+        return SCRATCH_HOLO;
     }
 
     public static void applyTypedSpeed() {
@@ -503,10 +727,25 @@ public class SpaceEngine {
                 double val = Double.parseDouble(planetEditBuffer);
                 int u = fieldUnits[activeEditField];
                 switch (activeEditField) {
-                    case 0: if (u == 0) p.mass = val; else if (u == 1) p.mass = val * 333000.0; else if (u == 2) p.mass = val / 5.9722e24; break;
-                    case 1: if (u == 0) p.radius = (val / 1260.0) / 2.0; else if (u == 1) p.radius = (val * 12742.0 / 1260.0) / 2.0; else if (u == 2) p.radius = (val * 1392700.0 / 1260.0) / 2.0; p.targetRadius = p.radius; break;
-                    case 2: if (u == 0) p.rotationPeriod = val; else if (u == 1) p.rotationPeriod = val * 24.0; else if (u == 2) p.rotationPeriod = val * 8760.0; break;
-                    case 3: p.tilt = val; break;
+                    case 0:
+                        if (u == 0) p.mass = val;
+                        else if (u == 1) p.mass = val * 333000.0;
+                        else if (u == 2) p.mass = val / 5.9722e24;
+                        break;
+                    case 1:
+                        if (u == 0) p.radius = (val / 1260.0) / 2.0;
+                        else if (u == 1) p.radius = (val * 12742.0 / 1260.0) / 2.0;
+                        else if (u == 2) p.radius = (val * 1392700.0 / 1260.0) / 2.0;
+                        p.targetRadius = p.radius;
+                        break;
+                    case 2:
+                        if (u == 0) p.rotationPeriod = val;
+                        else if (u == 1) p.rotationPeriod = val * 24.0;
+                        else if (u == 2) p.rotationPeriod = val * 8760.0;
+                        break;
+                    case 3:
+                        p.tilt = val;
+                        break;
                     case 4:
                         double vNew = 0;
                         if (u == 0) vNew = val / 1260.0;
@@ -517,7 +756,11 @@ public class SpaceEngine {
                         if (p.vel.lengthSquared() > 0.0001) p.vel.normalize().mul(vNew);
                         else p.vel.set(vNew, 0, 0);
                         break;
-                    case 5: if (u == 0) p.temperature = val; else if (u == 1) p.temperature = val - 273.15; else if (u == 2) p.temperature = (val - 32.0) / 1.8; break;
+                    case 5:
+                        if (u == 0) p.temperature = val;
+                        else if (u == 1) p.temperature = val - 273.15;
+                        else if (u == 2) p.temperature = (val - 32.0) / 1.8;
+                        break;
                 }
             }
         } catch (Exception ignored) {}
@@ -525,12 +768,12 @@ public class SpaceEngine {
     }
 
     public static Vector3d calculateSpawnVelocity(Vector3d pos, Vector3d up) {
-        Vector3d velocity = new Vector3d();
+        SCRATCH_VEL_OUT.zero();
         if (currentSpawnMode == SpawnMode.LAUNCH) {
             Vector3f rayF = CameraManager.getMouseRay();
             capSpeed();
             double launchSpeedBlocks = getSpeedInKmS() / BLOCK_TO_KM;
-            velocity.set(rayF.x, rayF.y, rayF.z).mul(launchSpeedBlocks);
+            SCRATCH_VEL_OUT.set(rayF.x, rayF.y, rayF.z).mul(launchSpeedBlocks);
         } else if (currentSpawnMode == SpawnMode.ORBIT && orbitTarget != null && planets.contains(orbitTarget)) {
             Planet attractor = orbitTarget;
             MenuItem item = customPlanet != null ? customPlanet : (menuItems != null && selectedPlanetIndex < menuItems.length ? menuItems[selectedPlanetIndex] : null);
@@ -539,11 +782,11 @@ public class SpaceEngine {
             double r1 = Math.max(0.01, attractor.radius);
             double r2 = (item != null) ? Math.max(0.01, item.radius) : 0.01;
 
-            Vector3d dirToAttractor = new Vector3d(attractor.pos).sub(pos);
-            double distBlocks = dirToAttractor.length();
+            SCRATCH_DIR.set(attractor.pos).sub(pos);
+            double distBlocks = SCRATCH_DIR.length();
 
             if (distBlocks > 0.1) {
-                dirToAttractor.normalize();
+                SCRATCH_DIR.div(distBlocks);
                 if (autoOrbitSpeed) {
                     double totalMass = m1 + m2;
                     double effDist = Math.max(distBlocks, Math.max((r1 + r2) * 0.5, 0.1));
@@ -558,27 +801,26 @@ public class SpaceEngine {
                 }
 
                 double orbitalVelocity = getSpeedInKmS() / BLOCK_TO_KM;
-                Vector3d right = new Vector3d(dirToAttractor).cross(up);
-                if (right.lengthSquared() < 0.001) { up.set(1, 0, 0); right.set(dirToAttractor).cross(up); }
-                right.normalize();
-                velocity.set(right).mul(orbitalVelocity).add(attractor.vel);
+                SCRATCH_RIGHT.set(SCRATCH_DIR).cross(up);
+                if (SCRATCH_RIGHT.lengthSquared() < 0.001) { up.set(1, 0, 0); SCRATCH_RIGHT.set(SCRATCH_DIR).cross(up); }
+                SCRATCH_RIGHT.normalize();
+                SCRATCH_VEL_OUT.set(SCRATCH_RIGHT).mul(orbitalVelocity).add(attractor.vel);
             }
         }
-        if (Double.isNaN(velocity.x)) velocity.zero();
-        return velocity;
+        if (Double.isNaN(SCRATCH_VEL_OUT.x)) SCRATCH_VEL_OUT.zero();
+        return SCRATCH_VEL_OUT;
     }
 
     public static void spawnPlanetWithOrbit(Vector3d basePos, double inclination) {
         synchronized (STATE_LOCK) {
             MenuItem item = customPlanet != null ? customPlanet : menuItems[selectedPlanetIndex];
-            Vector3d spawnPos = new Vector3d(), spawnUp = new Vector3d();
-            getInclinedOrbitState(basePos, inclination, orbitTarget, spawnPos, spawnUp);
-            if (isOverlappingAnyPlanet(spawnPos, item.radius)) {
+            getInclinedOrbitState(basePos, inclination, orbitTarget, SCRATCH_SPAWN_POS, SCRATCH_SPAWN_UP);
+            if (isOverlappingAnyPlanet(SCRATCH_SPAWN_POS, item.radius)) {
                 SpaceUI.addNotification("Cannot spawn inside another object!");
                 return;
             }
-            Vector3d velocity = calculateSpawnVelocity(spawnPos, spawnUp);
-            planets.add(new Planet(item.name, spawnPos.x, spawnPos.y, spawnPos.z, velocity, item.radius, item.mass, item.tilt, item.rotationPeriod, item.temperature, item.planetTex, item.uvMap, item.type, item.isRigid));
+            Vector3d velocity = calculateSpawnVelocity(SCRATCH_SPAWN_POS, SCRATCH_SPAWN_UP);
+            planets.add(new Planet(item.name, SCRATCH_SPAWN_POS.x, SCRATCH_SPAWN_POS.y, SCRATCH_SPAWN_POS.z, velocity, item.radius, item.mass, item.tilt, item.rotationPeriod, item.temperature, item.planetTex, item.uvMap, item.type, item.isRigid));
             planetsNeedSort = true;
             customPlanet = null;
         }
@@ -598,10 +840,38 @@ public class SpaceEngine {
         }
     }
 
+    private static void syncFrameToMonitorRefreshRate() {
+        if (!vsyncEnabled) {
+            lastFrameSyncNs = System.nanoTime();
+            return;
+        }
+        int refreshRate = 60;
+        long monitor = GLFW.glfwGetPrimaryMonitor();
+        if (monitor != 0L) {
+            GLFWVidMode mode = GLFW.glfwGetVideoMode(monitor);
+            if (mode != null && mode.refreshRate() > 20) refreshRate = mode.refreshRate();
+        }
+        long targetFrameNs = 1_000_000_000L / refreshRate;
+        long now = System.nanoTime();
+        long elapsed = now - lastFrameSyncNs;
+        if (elapsed < targetFrameNs) {
+            long remainingNs = targetFrameNs - elapsed;
+            if (remainingNs > 2_000_000L) {
+                LockSupport.parkNanos(remainingNs - 1_500_000L);
+            }
+            while (System.nanoTime() - lastFrameSyncNs < targetFrameNs) {
+                Thread.onSpinWait();
+            }
+        }
+        lastFrameSyncNs = System.nanoTime();
+    }
+
     public static void renderFrame() {
         long window = windowHandle != 0 ? windowHandle : GLFW.glfwGetCurrentContext();
         if (window == 0) return;
         windowHandle = window;
+
+        syncFrameToMonitorRefreshRate();
 
         GLFW.glfwPollEvents();
         if (!CameraManager.isRotating()) {
@@ -627,6 +897,9 @@ public class SpaceEngine {
             if (!isVulkanInitialized) {
                 GLFW.glfwSetWindowTitle(window, "Space SandBox");
                 SBoxVulkanCore.init();
+                if (!SBoxVulkanCore.supportsFp64) {
+                    physicsPrecisionMode = 1;
+                }
                 SBoxVulkanSwapchain.initSwapchain(window, fWidth, fHeight);
                 SBoxVulkanCanvas.createCanvas(fWidth, fHeight);
                 SBoxCompute.init();
@@ -634,7 +907,10 @@ public class SpaceEngine {
                 SBoxVulkanUI.updateCanvasDescriptor();
                 PhysicsEngine.init();
                 SpaceUI.preloadAllResources();
+                SimulationManager.refreshSavedSimulations();
+                loadSettings();
                 SBoxAudioEngine.init();
+                SBoxAudioEngine.setMusicVolume(musicVolume);
                 isVulkanInitialized = true;
             } else if (needsSwapchainRecreate || fWidth != SBoxVulkanCanvas.canvasWidth || fHeight != SBoxVulkanCanvas.canvasHeight) {
                 needsSwapchainRecreate = false;
@@ -660,6 +936,7 @@ public class SpaceEngine {
             int[] ssboCounts;
 
             synchronized (STATE_LOCK) {
+                SBoxCompute.waitForFrameFence();
                 SpaceInput.processInput(window, logicalW, logicalH, uiScale);
                 if (CameraManager.isLocked) isEscMenuOpen = false;
                 if (isPhotoModeActive) isPaused = true;
@@ -674,10 +951,15 @@ public class SpaceEngine {
                 }
                 CameraManager.update(null);
 
-                SBoxCompute.waitForFrameFence();
                 ssboCounts = SBoxCompute.updateSSBOs();
                 SpaceUI.renderDirectUI(window, logicalW, logicalH, uiScale);
-                vkAcquireNextImageKHR(device, SBoxVulkanSwapchain.swapchain, -1L, SBoxVulkanSwapchain.imageAvailableSemaphore, VK_NULL_HANDLE, pImageIndex);
+                checkAndAutoSaveSettings();
+
+                int acquireRes = vkAcquireNextImageKHR(device, SBoxVulkanSwapchain.swapchain, -1L, SBoxVulkanSwapchain.imageAvailableSemaphore, VK_NULL_HANDLE, pImageIndex);
+                if (acquireRes == VK_ERROR_OUT_OF_DATE_KHR) {
+                    needsSwapchainRecreate = true;
+                    return;
+                }
             }
 
             int imageIndex = pImageIndex.get(0);
@@ -754,6 +1036,7 @@ public class SpaceEngine {
                     .pCommandBuffers(stack.pointers(cmd))
                     .pSignalSemaphores(stack.longs(SBoxVulkanSwapchain.renderFinishedSemaphore));
 
+            vkResetFences(device, SBoxCompute.frameFence);
             vkQueueSubmit(SBoxVulkanCore.graphicsQueue, submitInfo, SBoxCompute.frameFence);
 
             VkPresentInfoKHR presentInfo = VkPresentInfoKHR.calloc(stack).sType(VK_STRUCTURE_TYPE_PRESENT_INFO_KHR)
@@ -761,15 +1044,16 @@ public class SpaceEngine {
                     .swapchainCount(1).pSwapchains(stack.longs(SBoxVulkanSwapchain.swapchain))
                     .pImageIndices(pImageIndex);
 
-            vkQueuePresentKHR(SBoxVulkanCore.graphicsQueue, presentInfo);
+            int presentRes = vkQueuePresentKHR(SBoxVulkanCore.graphicsQueue, presentInfo);
+            if (presentRes == VK_ERROR_OUT_OF_DATE_KHR || presentRes == VK_SUBOPTIMAL_KHR) {
+                needsSwapchainRecreate = true;
+            }
 
             if (requestScreenshot) {
                 requestScreenshot = false;
                 vkWaitForFences(device, SBoxCompute.frameFence, true, -1L);
                 SBoxCompute.captureScreenshot(activeRenderW, activeRenderH);
             }
-
-            syncToMonitorRefreshRate();
         }
     }
 }

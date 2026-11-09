@@ -7,6 +7,7 @@ import org.lwjgl.glfw.GLFW;
 import org.lwjgl.system.MemoryStack;
 import spacesb.remake.render.SBoxCompute;
 import spacesb.remake.render.SBoxVulkanCanvas;
+import spacesb.remake.render.SBoxVulkanCore;
 import spacesb.remake.render.SBoxVulkanUI;
 
 import javax.imageio.ImageIO;
@@ -43,6 +44,7 @@ public class SpaceUI {
     public static final String ICON_HOLES = "assets/spacesb-remake/textures/gui/holes.png";
     public static final String CURSOR_TEX = "assets/spacesb-remake/textures/gui/cursor.png";
     public static final String CURSOR_AIM_TEX = "assets/spacesb-remake/textures/gui/cursor1.png";
+    public static final String ICON_VIEWING = "assets/spacesb-remake/textures/gui/viewing.png";
     public static final String ICON_FLASHLIGHT = "assets/spacesb-remake/textures/gui/flashlight.png";
     public static final String ICON_RAYS = "assets/spacesb-remake/textures/gui/rays.png";
     public static final String LOGO_TEX = "assets/spacesb-remake/textures/gui/mod_logo.png";
@@ -59,7 +61,6 @@ public class SpaceUI {
     public static boolean isLanguageMenuOpen = false;
     public static final int[] escLangBtnHit = new int[4];
     public static final int[] escLangDropdownHit = new int[4];
-    private static boolean prevLeftMouseDown = false;
     private static boolean defaultsApplied = false;
     private static boolean windowFullscreenApplied = false;
 
@@ -102,7 +103,34 @@ public class SpaceUI {
             {"Я понимаю", "I Understand", "Я розумію", "Я разумею", "Түсіндім", "我已了解", "Je comprends", "Verstanden"},
             {"Скорость: ", "Speed: ", "Швидкість: ", "Хуткасць: ", "Жылдамдық: ", "速度: ", "Vitesse: ", "Geschw.: "},
             {"Гравит. сетка", "Gravity Grid", "Гравіт. сітка", "Гравіт. сетка", "Гравит. тор", "引力网格", "Grille grav.", "Grav.-Gitter"},
-            {"Музыка:", "Music:", "Музика:", "Музыка:", "Музыка:", "音乐:", "Musique:", "Musik:"}
+            {"Музыка:", "Music:", "Музика:", "Музыка:", "Музыка:", "音乐:", "Musique:", "Musik:"},
+            {"Визуал", "Visual", "Візуал", "Візуал", "Визуал", "视觉设置", "Visuel", "Visuell"},
+            {"Разное", "Misc", "Різне", "Рознае", "Басқа", "杂项设置", "Divers", "Sonstiges"},
+            {"Кольца Сатурна", "Saturn Rings", "Кільця Сатурна", "Кольцы Сатурна", "Сатурн сақиналары", "土星环", "Anneaux Saturne", "Saturnringe"},
+            {"Аккрец. диск ЧД", "BH Accretion Disk", "Акрец. диск ЧД", "Акрэц. дыск ЧД", "ҚТ аккрец. дискі", "黑洞吸积盘", "Disque d'accrétion", "SL-Akkretionsscheibe"},
+            {"Цвет меню 1", "UI Color 1", "Колір меню 1", "Колер меню 1", "Мәзір түсі 1", "界面颜色 1", "Couleur UI 1", "UI-Farbe 1"},
+            {"Цвет меню 2", "UI Color 2", "Колір меню 2", "Колер меню 2", "Мәзір түсі 2", "界面颜色 2", "Couleur UI 2", "UI-Farbe 2"},
+            {"Биты матем.", "Math Bits", "Біти матем.", "Біты матэм.", "Матем. биттері", "运算精度", "Bits math.", "Math.-Bits"},
+            {"Режим физ.:", "Phys. Mode:", "Режим фіз.:", "Рэжым фіз.:", "Физ. режимі:", "物理模式:", "Mode phys.:", "Phys.-Modus:"},
+            {"Упрощённая", "Simplified", "Спрощена", "Спрошчаная", "Жеңілдетілген", "简化物理", "Simplifiée", "Vereinfacht"},
+            {"Реалистичная", "Realistic", "Реалістична", "Рэалістычная", "Шынайы", "真实物理", "Réaliste", "Realistisch"},
+            {"Предпросмотр объекта", "Object Preview", "Перегляд об'єкта", "Прагляд аб'екта", "Объектіні шолу", "3D 物体预览", "Aperçu de l'objet", "Objektvorschau"},
+            {"Вкл/выкл 3D-окно осмотра объекта на чёрном фоне", "Toggle interactive 3D object preview on black background", "Увімк/вимк 3D-вікно огляду об'єкта на чорному фоні", "Укл/выкл 3D-акно агляду аб'екта на чорным фоне", "Қара фонда 3D объектіні айналдырып қарау терезесі", "在纯黑背景上开启或关闭可旋转的 3D 物体预览窗口", "Afficher/masquer l'aperçu 3D interactif sur fond noir", "3D-Objektvorschau auf schwarzem Hintergrund umschalten"},
+            {"Фонарик камеры", "Camera Flashlight", "Ліхтарик камери", "Ліхтарык камеры", "Камера шамы", "相机手电筒", "Lampe torche", "Kamera-Taschenlampe"},
+            {"Подсветить тёмную ночную сторону объекта от камеры", "Illuminate the dark night side of the object from camera", "Підсвітити темну нічну сторону об'єкта від камери", "Падсвяціць цёмную начную старану аб'екта ад камеры", "Объектінің қараңғы түнгі жағын камерадан жарықтандыру", "从相机视角照亮当前锁定天体的暗面", "Éclairer la face nocturne de l'objet depuis la caméra", "Nachtseite des Objekts von der Kamera beleuchten"},
+            {"Лучи и корона", "Light Rays & Corona", "Промені та корона", "Прамяні і карона", "Сәулелер мен тәж", "光芒与日冕", "Rayons & Couronne", "Lichtstrahlen & Korona"},
+            {"Вкл/выкл солнечные лучи, свечение и корону объекта", "Toggle solar glare, light rays and corona bloom", "Увімк/вимк сонячні промені, світіння та корону об'єкта", "Укл/выкл сонечныя прамяні, свячэнне і карону аб'екта", "Күн сәулелерін, жарқылды және тәжді қосу/өшіру", "开启或关闭恒星与高温天体的日冕光芒与眩光效果", "Activer/désactiver les rayons lumineux et la couronne", "Strahlenkranz, Blendung und Korona umschalten"},
+            {"ЛКМ: крутить | Колесо: зум", "LMB: rotate | Wheel: zoom", "ЛКМ: крутити | Колесо: зум", "ЛКМ: круціць | Кола: зум", "ЛКМ: айналдыру | Дөңгелек: зум", "左键旋转 | 滚轮缩放", "Clic G: tourner | Molette: zoom", "LMT: drehen | Rad: Zoom"},
+            {"Симуляции", "Simulations", "Симуляції", "Сімуляцыі", "Симуляциялар", "模拟库", "Simulations", "Simulationen"},
+            {"Готовые", "Presets", "Готові", "Гатовыя", "Дайын", "预设模拟", "Préréglages", "Vorlagen"},
+            {"Сохранённые", "Saved", "Збережені", "Захаваныя", "Сақталған", "已存模拟", "Sauvegardes", "Gespeichert"},
+            {"Загрузить симуляцию", "Load Simulation", "Завантажити симуляцію", "Загрузіць сімуляцыю", "Симуляцияны жүктеу", "加载模拟", "Charger sim.", "Sim. laden"},
+            {"Перезаписать", "Overwrite", "Перезаписати", "Перазапісаць", "Қайта жазу", "覆盖保存", "Écraser", "Überschreiben"},
+            {"Удалить", "Delete", "Видалити", "Выдаліць", "Жою", "删除模拟", "Supprimer", "Löschen"},
+            {"Корневая папка", "Root Folder", "Коренева папка", "Карэнная папка", "Түпкі бума", "存档文件夹", "Dossier", "Ordner"},
+            {"+ Сохранить текущую симуляцию", "+ Save Current Simulation", "+ Зберегти поточну симуляцію", "+ Захаваць бягучую сімуляцыю", "+ Ағымдағыны сақтау", "+ 保存当前模拟", "+ Sauvegarder sim. actuelle", "+ Aktuelle Sim. speichern"},
+            {"Солнечная система", "Solar System", "Сонячна система", "Сонечная сістэма", "Күн жүйесі", "太阳系 (Solar System)", "Système solaire", "Sonnensystem"},
+            {"2х ЛКМ по названию — переименовать", "Double-click title to rename", "2х ЛКМ по назві — перейменувати", "2х ЛКМ па назве — перайменаваць", "Атын өзгерту үшін 2 рет басыңыз", "双击名称可重命名", "Double-clic: renommer", "Doppelklick: umbenennen"}
     };
 
     public static String tr(int key) {
@@ -115,6 +143,11 @@ public class SpaceUI {
         if (preset == 1) return "Med";
         if (preset == 2) return "Hard";
         return "Ultra";
+    }
+
+    public static String getPhysicsPrecisionLabel(int mode) {
+        int idx = Math.max(0, Math.min(MATH_BITS_OPTIONS.length - 1, mode));
+        return MATH_BITS_OPTIONS[idx];
     }
 
     private static void applyInitialDefaultSettings(long window) {
@@ -130,8 +163,20 @@ public class SpaceUI {
             particlePreset = 3; particleSliderPos = 0.875f;
             musicVolume = 0.20f;
             currentLanguage = 1;
+            enableSaturnRings = true;
+            enableAccretionDisk = false;
+            uiColor1 = 0xFF050505;
+            uiColor2 = 0xFFFFFFFF;
+            isVisualTabOpen = false;
+            isPhysicsTabOpen = false;
+            isMiscTabOpen = false;
+            physicsPrecisionMode = SBoxVulkanCore.supportsFp64 ? 2 : 1;
+            isMathBitsMenuOpen = false;
+            physicsSimMode = 1;
+            physicsModeSliderPos = 0.75f;
             isMoveToolActive = false; showGrid = true; showGravityGrid = false;
             showTrails = true; showHabitableZone = false; physicsEnabled = true; isDeleteToolActive = false;
+            SpaceEngine.loadSettings();
             DiscordRPC.start();
         }
         if (window != 0L && !windowFullscreenApplied) {
@@ -143,6 +188,8 @@ public class SpaceUI {
     private static double editMenuAnimX = 0, escMenuAnimX = -320, lastUiTime = 0, animAddY = 0.0, animToolsY = 0.0;
     private static boolean initNotif = false, prevShowGrid = true, prevShowGravityGrid = false, prevShowTrails = true;
     private static boolean prevShowHabitableZone = false, prevPhysicsEnabled = true, prevMoveTool = false, prevDeleteTool = false, prevPaused = false;
+    private static boolean prevSaturnRings = true, prevAccretionDisk = false, prevVsync = true;
+    private static int prevMathBits = -1, prevPhysMode = -1;
 
     public static final int FONT_HEIGHT = 16, SMALL_FONT_HEIGHT = 12;
     public static boolean isFontLoaded = false;
@@ -166,6 +213,9 @@ public class SpaceUI {
     private static final float[] SCRATCH_SEG = new float[4], SCRATCH_UVA = new float[2], SCRATCH_UVB = new float[2];
     private static final int[] VISIBLE_ITEMS_BUF = new int[64];
 
+    private static int frameOverlayLineCount = 0;
+    private static final int MAX_FRAME_OVERLAY_LINES = 1600;
+
     public static void initGL() {}
     public static void setProjectionMatrix(Matrix4f mat) {}
     public static void onScroll(double yoffset) {}
@@ -186,9 +236,7 @@ public class SpaceUI {
                 java.nio.file.Path p = Paths.get(prefix + cleanPath);
                 if (Files.exists(p)) return Files.readAllBytes(p);
             }
-        } catch (Exception e) {
-            System.err.println("[SBox UI] Ошибка при чтении: " + cleanPath);
-        }
+        } catch (Exception ignored) {}
         return null;
     }
 
@@ -342,7 +390,71 @@ public class SpaceUI {
         textures.put(CURSOR_TRASH_TEX, SBoxVulkanUI.uploadTexture(buf, 16, 16, VK_FORMAT_R8G8B8A8_UNORM));
     }
 
+    private static long createProceduralViewingIcon() {
+        String[] art = {
+                "...XXXXXXXXXX...", "..XXXXXXXXXXXX..", ".XXXXXXXXXXXXXX.", "XXXXXXXXXXXXXXXX",
+                "XXXXXXXXXXXXXXXX", "XXXXXXWWWWXXXXXX", "XXXXWWWWWWWWXXXX", "XXXWWWXWWXWWWXXX",
+                "XXXWWXWWWWXWWXXX", "XXXWWWXWWXWWWXXX", "XXXXWWWWWWWWXXXX", "XXXXXXWWWWXXXXXX",
+                "XXXXXXXXXXXXXXXX", ".XXXXXXXXXXXXXX.", "..XXXXXXXXXXXX..", "...XXXXXXXXXX..."
+        };
+        ByteBuffer buf = BufferUtils.createByteBuffer(16 * 16 * 4);
+        for (int y = 0; y < 16; y++) {
+            String row = art[y];
+            for (int x = 0; x < 16; x++) {
+                char ch = row.charAt(x);
+                if (ch == 'W') buf.put((byte) 255).put((byte) 255).put((byte) 255).put((byte) 255);
+                else if (ch == 'X') buf.put((byte) 20).put((byte) 20).put((byte) 20).put((byte) 255);
+                else buf.put((byte) 0).put((byte) 0).put((byte) 0).put((byte) 0);
+            }
+        }
+        buf.flip();
+        long id = SBoxVulkanUI.uploadTexture(buf, 16, 16, VK_FORMAT_R8G8B8A8_UNORM);
+        textures.put(ICON_VIEWING, id);
+        return id;
+    }
+
+    private static long createProceduralSolarSystemBanner() {
+        int bw = 320, bh = 180;
+        BufferedImage img = new BufferedImage(bw, bh, BufferedImage.TYPE_INT_ARGB);
+        Graphics2D g2d = img.createGraphics();
+        g2d.setColor(new Color(4, 6, 12));
+        g2d.fillRect(0, 0, bw, bh);
+        g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+        g2d.setColor(new Color(255, 195, 90, 95));
+        g2d.fillOval(bw / 2 - 42, bh / 2 - 48, 84, 84);
+        g2d.setColor(new Color(255, 240, 190, 210));
+        g2d.fillOval(bw / 2 - 16, bh / 2 - 22, 32, 32);
+        g2d.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 44));
+        FontMetrics fm1 = g2d.getFontMetrics();
+        String t1 = "SOLAR";
+        int x1 = (bw - fm1.stringWidth(t1)) / 2;
+        g2d.setColor(Color.BLACK);
+        g2d.drawString(t1, x1 + 3, 86);
+        g2d.setColor(Color.WHITE);
+        g2d.drawString(t1, x1, 83);
+        g2d.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 24));
+        FontMetrics fm2 = g2d.getFontMetrics();
+        String t2 = "SYSTEM";
+        int x2 = (bw - fm2.stringWidth(t2)) / 2;
+        g2d.setColor(Color.BLACK);
+        g2d.drawString(t2, x2 + 2, 118);
+        g2d.setColor(new Color(215, 215, 220));
+        g2d.drawString(t2, x2, 116);
+        g2d.dispose();
+
+        int[] pixels = img.getRGB(0, 0, bw, bh, null, 0, bw);
+        ByteBuffer buffer = BufferUtils.createByteBuffer(bw * bh * 4);
+        for (int p : pixels) {
+            buffer.put((byte) ((p >> 16) & 0xFF)).put((byte) ((p >> 8) & 0xFF)).put((byte) (p & 0xFF)).put((byte) ((p >> 24) & 0xFF));
+        }
+        buffer.flip();
+        long id = SBoxVulkanUI.uploadTexture(buffer, bw, bh, VK_FORMAT_R8G8B8A8_UNORM);
+        textures.put(SimulationManager.SOLAR_SYSTEM_COVER_TEX, id);
+        return id;
+    }
+
     public static long getTexture(String path) {
+        if (path == null || path.isEmpty()) return -1;
         if (textures.containsKey(path)) return textures.get(path);
         if (CURSOR_TRASH_TEX.equals(path)) {
             createProceduralTrashCursor();
@@ -350,9 +462,21 @@ public class SpaceUI {
         }
         try {
             byte[] bytes = loadFileBytes(path);
-            if (bytes == null) return -1;
+            if (bytes == null && SimulationManager.SOLAR_SYSTEM_COVER_TEX.equals(path)) {
+                bytes = loadFileBytes(SimulationManager.SOLAR_SYSTEM_COVER_ALT);
+                if (bytes == null) bytes = loadFileBytes("solarsystem.png");
+            }
+            if (bytes == null) {
+                if (ICON_VIEWING.equals(path)) return createProceduralViewingIcon();
+                if (SimulationManager.SOLAR_SYSTEM_COVER_TEX.equals(path)) return createProceduralSolarSystemBanner();
+                return -1;
+            }
             BufferedImage bi = ImageIO.read(new ByteArrayInputStream(bytes));
-            if (bi == null) return -1;
+            if (bi == null) {
+                if (ICON_VIEWING.equals(path)) return createProceduralViewingIcon();
+                if (SimulationManager.SOLAR_SYSTEM_COVER_TEX.equals(path)) return createProceduralSolarSystemBanner();
+                return -1;
+            }
             int w = bi.getWidth(), h = bi.getHeight();
             int[] pixels = bi.getRGB(0, 0, w, h, null, 0, w);
             ByteBuffer buffer = BufferUtils.createByteBuffer(w * h * 4);
@@ -363,15 +487,21 @@ public class SpaceUI {
             long id = SBoxVulkanUI.uploadTexture(buffer, w, h, VK_FORMAT_R8G8B8A8_UNORM);
             textures.put(path, id);
             return id;
-        } catch (Exception e) { return -1; }
+        } catch (Exception e) {
+            if (ICON_VIEWING.equals(path)) return createProceduralViewingIcon();
+            if (SimulationManager.SOLAR_SYSTEM_COVER_TEX.equals(path)) return createProceduralSolarSystemBanner();
+            return -1;
+        }
     }
 
     public static void preloadAllResources() {
         applyInitialDefaultSettings(0L);
         initFont("assets/spacesb-remake/fonts/minecraft.ttf");
         getTexture(ICON_PLANETS); getTexture(ICON_MOONS); getTexture(ICON_STARS); getTexture(ICON_HOLES);
-        getTexture(CURSOR_TEX); getTexture(CURSOR_AIM_TEX); getTexture(ICON_FLASHLIGHT); getTexture(ICON_RAYS);
+        getTexture(CURSOR_TEX); getTexture(CURSOR_AIM_TEX);
+        getTexture(ICON_VIEWING); getTexture(ICON_FLASHLIGHT); getTexture(ICON_RAYS);
         getTexture(LOGO_TEX); getTexture(MODRINTH_TEX); getTexture(TELEGRAM_TEX); getTexture(DONATE_TEX);
+        getTexture(SimulationManager.SOLAR_SYSTEM_COVER_TEX);
         createProceduralTrashCursor();
         for (MenuItem item : menuItems) {
             if (item.guiTex != null && !item.guiTex.isEmpty()) getTexture(item.guiTex);
@@ -379,6 +509,7 @@ public class SpaceUI {
     }
 
     public static void fill(int x1, int y1, int x2, int y2, int color) {
+        if (x2 <= x1 || y2 <= y1) return;
         float a = (color >> 24 & 255) / 255.0f, r = (color >> 16 & 255) / 255.0f;
         float g = (color >> 8 & 255) / 255.0f, b = (color & 255) / 255.0f;
         if (a == 0) a = 1.0f;
@@ -466,6 +597,18 @@ public class SpaceUI {
         return w;
     }
 
+    public static String fitSmallText(String text, int maxWidthPx) {
+        if (text == null || text.isEmpty()) return "";
+        if (getSmallTextWidth(text) <= maxWidthPx) return text;
+        String dots = "...";
+        int dotsW = getSmallTextWidth(dots);
+        int len = text.length();
+        while (len > 1 && getSmallTextWidth(text.substring(0, len)) + dotsW > maxWidthPx) {
+            len--;
+        }
+        return text.substring(0, len) + dots;
+    }
+
     public static void drawIcon(String path, int x, int y, int w, int h, int color) {
         long id = getTexture(path);
         if (id == -1) {
@@ -482,9 +625,9 @@ public class SpaceUI {
 
     public static int drawButton(String text, int x, int y, int padX, int padY, boolean isHighlight) {
         int btnW = getTextWidth(text) + padX * 2, btnH = FONT_HEIGHT + padY * 2;
-        fill(x, y, x + btnW, y + btnH, isHighlight ? 0xFF111111 : 0xFF000000);
-        drawOutline(x, y, btnW, btnH, isHighlight ? 0xFFFFFFFF : 0x80FFFFFF);
-        drawText(text, x + padX, y + padY, 0xFFFFFFFF);
+        fill(x, y, x + btnW, y + btnH, isHighlight ? 0xFF161616 : uiColor1);
+        drawOutline(x, y, btnW, btnH, isHighlight ? uiColor2 : 0x80FFFFFF);
+        drawText(text, x + padX, y + padY, isHighlight ? uiColor2 : 0xFFFFFFFF);
         return btnW;
     }
 
@@ -507,10 +650,33 @@ public class SpaceUI {
         drawSmallText(value, x + w - getSmallTextWidth(value) - 6, y + (h - SMALL_FONT_HEIGHT) / 2, active ? 0xFF55FF55 : 0xFFAAAAAA);
     }
 
+    public static void drawColorSettingRow(String label, int colorVal, int x, int y, int w, int h, boolean pickerOpen) {
+        fill(x, y, x + w, y + h, pickerOpen ? 0xFF1A2430 : 0xFF101010);
+        drawOutline(x, y, w, h, pickerOpen ? uiColor2 : 0xFF333333);
+        drawSmallText(label, x + 6, y + (h - SMALL_FONT_HEIGHT) / 2, 0xFFDDDDDD);
+
+        int swW = 28, swH = h - 4;
+        int swX = x + w - swW - 6, swY = y + 2;
+        fill(swX, swY, swX + swW, swY + swH, colorVal | 0xFF000000);
+        drawOutline(swX, swY, swW, swH, 0xFFAAAAAA);
+    }
+
+    public static void drawExpandableTabHeader(String title, boolean isOpen, int x, int y, int w, int h, boolean hovered) {
+        fill(x, y, x + w, y + h, isOpen ? 0xFF18222E : (hovered ? 0xFF161A22 : 0xFF111318));
+        drawOutline(x, y, w, h, isOpen ? uiColor2 : 0xFF445566);
+        fill(x, y, x + 3, y + h, isOpen ? uiColor2 : 0xFF557799);
+        String arrow = isOpen ? "v  " : ">  ";
+        drawSmallText(arrow + title, x + 8, y + (h - SMALL_FONT_HEIGHT) / 2, isOpen ? uiColor2 : 0xFFEEEEEE);
+    }
+
     public static void drawTinyModeButton(String letter, int x, int y, int size, boolean active, boolean disabled) {
         fill(x, y, x + size, y + size, disabled ? 0xFF111111 : (active ? 0xFF333333 : 0xFF080808));
-        drawOutline(x, y, size, size, disabled ? 0xFF2A2A2A : (active ? 0xFFFFFFFF : 0xFF555555));
+        drawOutline(x, y, size, size, disabled ? 0xFF2A2A2A : (active ? uiColor2 : 0xFF555555));
         drawText(letter, x + (size - getTextWidth(letter)) / 2, y + (size - FONT_HEIGHT) / 2 + 1, disabled ? 0xFF555555 : (active ? 0xFFFFFFAA : 0xFFAAAAAA));
+    }
+
+    private static void clearHitbox(int[] rect) {
+        rect[0] = 0; rect[1] = 0; rect[2] = 0; rect[3] = 0;
     }
 
     private static void drawCameraViewfinder(int sWidth, int sHeight) {
@@ -532,7 +698,7 @@ public class SpaceUI {
         fill(ix0, iy0, ix0 + innerArmX, iy0 + t, col); fill(ix0, iy0, ix0 + t, iy0 + innerArmY, col);
         fill(ix1 - innerArmX, iy0, ix1, iy0 + t, col); fill(ix1 - t, iy0, ix1, iy0 + innerArmY, col);
         fill(ix0, iy1 - t, ix0 + innerArmX, iy1, col); fill(ix0, iy1 - innerArmY, ix0 + t, iy1, col);
-        fill(ix1 - innerArmX, iy1 - t, ix1, iy1, col); fill(ix1 - t, iy1 - innerArmY, ix1, oy1, col);
+        fill(ix1 - innerArmX, iy1 - t, ix1, iy1, col); fill(ix1 - t, iy1 - innerArmY, ix1, iy1, col);
 
         int crossR = Math.max(5, sHeight / 52);
         fill(cx - crossR, cy, cx + crossR + 1, cy + t, col);
@@ -550,7 +716,7 @@ public class SpaceUI {
 
         fill(bx, by, bx + boxW, by + boxH, 0xEE08090D);
         drawOutline(bx, by, boxW, boxH, 0xFF557799);
-        fill(bx, by, bx + 2, by + boxH, 0xFF55FF55);
+        fill(bx, by, bx + 2, by + boxH, uiColor2);
 
         if (title != null && !title.isEmpty()) {
             drawSmallText(title, bx + 8, by + 3, 0xFFFFFFFF);
@@ -632,20 +798,21 @@ public class SpaceUI {
         SCRATCH_UVB[0] = (float) (camXb / camZb);
         SCRATCH_UVB[1] = (float) (-camYb / camZb);
 
-        CameraManager.invertLensWarpUv(SCRATCH_UVA, camPos, forward, right, up);
-        CameraManager.invertLensWarpUv(SCRATCH_UVB, camPos, forward, right, up);
+        CameraManager.invertLensWarpUv(SCRATCH_UVA, camZa, camPos, forward, right, up);
+        CameraManager.invertLensWarpUv(SCRATCH_UVB, camZb, camPos, forward, right, up);
 
         outCoords[0] = 0.5f * sWidth + SCRATCH_UVA[0] * sHeight;
         outCoords[1] = 0.5f * sHeight + SCRATCH_UVA[1] * sHeight;
         outCoords[2] = 0.5f * sWidth + SCRATCH_UVB[0] * sHeight;
         outCoords[3] = 0.5f * sHeight + SCRATCH_UVB[1] * sHeight;
-        return true;
+        return Float.isFinite(outCoords[0]) && Float.isFinite(outCoords[1])
+                && Float.isFinite(outCoords[2]) && Float.isFinite(outCoords[3]);
     }
 
     private static boolean is3DPointOccludedByPlanets(Vector3d pt, Vector3d camPos) {
         SCRATCH_RAY.set(pt).sub(camPos);
         double segLen = SCRATCH_RAY.length();
-        if (segLen < 1e-5) return false;
+        if (segLen < 1e-5 || !Double.isFinite(segLen)) return false;
         SCRATCH_RAY.div(segLen);
 
         for (int i = 0, sz = planets.size(); i < sz; i++) {
@@ -653,12 +820,14 @@ public class SpaceUI {
             if (p == null || p.mass <= 0.0) continue;
             double r = p.radius;
             double dx = pt.x - p.pos.x, dy = pt.y - p.pos.y, dz = pt.z - p.pos.z;
-            double tiltRad = Math.toRadians(p.tilt), rotRad = Math.toRadians(p.currentAngle);
+            double tiltRad = Math.toRadians(p.tilt), rotRad = Math.toRadians(p.currentAngle % 360.0);
 
             if (dx * dx + dy * dy + dz * dz < 3.0 * r * r) {
                 SCRATCH_REL_PT.set(dx, dy, dz).rotateZ(-tiltRad).rotateY(-rotRad);
                 if (Math.abs(SCRATCH_REL_PT.x) <= r * 1.005 && Math.abs(SCRATCH_REL_PT.y) <= r * 1.005 && Math.abs(SCRATCH_REL_PT.z) <= r * 1.005) return true;
             }
+
+            if ("Hole".equals(p.type) && SpaceEngine.shaderMode < 2) continue;
 
             double camToPx = p.pos.x - camPos.x, camToPy = p.pos.y - camPos.y, camToPz = p.pos.z - camPos.z;
             double proj = camToPx * SCRATCH_RAY.x + camToPy * SCRATCH_RAY.y + camToPz * SCRATCH_RAY.z;
@@ -689,27 +858,59 @@ public class SpaceUI {
         return false;
     }
 
+    private static void emitOverlayLine(float x0, float y0, float x1, float y1, int sWidth, int sHeight, float thickness, float r, float g, float bCol, float alpha, boolean bypassBudget) {
+        if (!bypassBudget && frameOverlayLineCount >= MAX_FRAME_OVERLAY_LINES) return;
+        if (CameraManager.isLocked && CameraManager.lockedTarget != null && !isWelcomeMenuOpen) {
+            float clipX = Math.max(0.0f, (float) (currentEditMenuX + currentEditMenuW));
+            if (x0 < clipX && x1 < clipX) return;
+            if (x0 < clipX) {
+                float t = (clipX - x0) / Math.max(1e-5f, x1 - x0);
+                y0 += t * (y1 - y0);
+                x0 = clipX;
+            } else if (x1 < clipX) {
+                float t = (clipX - x1) / Math.max(1e-5f, x0 - x1);
+                y1 += t * (y0 - y1);
+                x1 = clipX;
+            }
+        }
+        if ((x0 < -64 && x1 < -64) || (x0 > sWidth + 64 && x1 > sWidth + 64)
+                || (y0 < -64 && y1 < -64) || (y0 > sHeight + 64 && y1 > sHeight + 64)) {
+            return;
+        }
+        SBoxVulkanUI.drawLine(x0, y0, x1, y1, thickness, r, g, bCol, alpha);
+        if (!bypassBudget) frameOverlayLineCount++;
+    }
+
     private static void drawOccluded3DSegment(
             Vector3d a, Vector3d b,
             Vector3d camPos, Vector3d forward, Vector3d right, Vector3d up,
-            int sWidth, int sHeight, float thickness, float r, float g, float bCol, float alpha, float[] segBuf) {
+            int sWidth, int sHeight, float thickness, float r, float g, float bCol, float alpha, float[] segBuf, boolean isOrbitPreview) {
+        if (!isOrbitPreview && frameOverlayLineCount >= MAX_FRAME_OVERLAY_LINES) return;
+        if (!Double.isFinite(a.x) || !Double.isFinite(a.y) || !Double.isFinite(a.z)
+                || !Double.isFinite(b.x) || !Double.isFinite(b.y) || !Double.isFinite(b.z)) {
+            return;
+        }
+
         boolean occA = is3DPointOccludedByPlanets(a, camPos);
         boolean occB = is3DPointOccludedByPlanets(b, camPos);
         if (occA && occB) return;
 
-        if (!occA && !occB) {
-            SCRATCH_MID.set(a).add(b).mul(0.5);
-            if (!is3DPointOccludedByPlanets(SCRATCH_MID, camPos)) {
-                if (project3DSegment(a, b, camPos, forward, right, up, sWidth, sHeight, segBuf)) {
-                    SBoxVulkanUI.drawLine(segBuf[0], segBuf[1], segBuf[2], segBuf[3], thickness, r, g, bCol, alpha);
-                }
-                return;
+        SCRATCH_MID.set(a).add(b).mul(0.5);
+        boolean occMid = is3DPointOccludedByPlanets(SCRATCH_MID, camPos);
+
+        if (!occA && !occB && !occMid) {
+            if (!project3DSegment(a, b, camPos, forward, right, up, sWidth, sHeight, segBuf)) return;
+            float dx = segBuf[2] - segBuf[0], dy = segBuf[3] - segBuf[1];
+            float lenSq = dx * dx + dy * dy;
+            if (lenSq < (sHeight * 0.45f) * (sHeight * 0.45f)) {
+                emitOverlayLine(segBuf[0], segBuf[1], segBuf[2], segBuf[3], sWidth, sHeight, thickness, r, g, bCol, alpha, isOrbitPreview);
             }
+            return;
         }
 
         if (occA != occB) {
             double lo = 0.0, hi = 1.0;
-            for (int iter = 0; iter < 9; iter++) {
+            for (int iter = 0; iter < 7; iter++) {
                 double mid = 0.5 * (lo + hi);
                 SCRATCH_PROBE.set(a).lerp(b, mid);
                 if (is3DPointOccludedByPlanets(SCRATCH_PROBE, camPos) == occA) lo = mid;
@@ -717,24 +918,32 @@ public class SpaceUI {
             }
             SCRATCH_CLIP.set(a).lerp(b, occA ? hi : lo);
             if (project3DSegment(occA ? SCRATCH_CLIP : a, occA ? b : SCRATCH_CLIP, camPos, forward, right, up, sWidth, sHeight, segBuf)) {
-                SBoxVulkanUI.drawLine(segBuf[0], segBuf[1], segBuf[2], segBuf[3], thickness, r, g, bCol, alpha);
+                float dx = segBuf[2] - segBuf[0], dy = segBuf[3] - segBuf[1];
+                if (dx * dx + dy * dy < (sHeight * 0.45f) * (sHeight * 0.45f)) {
+                    emitOverlayLine(segBuf[0], segBuf[1], segBuf[2], segBuf[3], sWidth, sHeight, thickness, r, g, bCol, alpha, isOrbitPreview);
+                }
             }
             return;
         }
 
-        final int SUB = 12;
+        final int SUB = 6;
         for (int k = 0; k < SUB; k++) {
+            if (!isOrbitPreview && frameOverlayLineCount >= MAX_FRAME_OVERLAY_LINES) break;
             SCRATCH_SUB0.set(a).lerp(b, (double) k / SUB);
             SCRATCH_SUB1.set(a).lerp(b, (double) (k + 1) / SUB);
             if (!is3DPointOccludedByPlanets(SCRATCH_SUB0, camPos) && !is3DPointOccludedByPlanets(SCRATCH_SUB1, camPos)) {
                 if (project3DSegment(SCRATCH_SUB0, SCRATCH_SUB1, camPos, forward, right, up, sWidth, sHeight, segBuf)) {
-                    SBoxVulkanUI.drawLine(segBuf[0], segBuf[1], segBuf[2], segBuf[3], thickness, r, g, bCol, alpha);
+                    float dx = segBuf[2] - segBuf[0], dy = segBuf[3] - segBuf[1];
+                    if (dx * dx + dy * dy < (sHeight * 0.35f) * (sHeight * 0.35f)) {
+                        emitOverlayLine(segBuf[0], segBuf[1], segBuf[2], segBuf[3], sWidth, sHeight, thickness, r, g, bCol, alpha, isOrbitPreview);
+                    }
                 }
             }
         }
     }
 
     private static void render3DOverlays(int sWidth, int sHeight) {
+        frameOverlayLineCount = 0;
         double pitch = Math.toRadians(CameraManager.rot.x);
         double yaw = Math.toRadians(CameraManager.rot.y);
 
@@ -742,20 +951,6 @@ public class SpaceUI {
         SCRATCH_RIGHT.set(SCRATCH_FORWARD).cross(0.0, 1.0, 0.0).normalize();
         SCRATCH_UP.set(SCRATCH_RIGHT).cross(SCRATCH_FORWARD).normalize();
         Vector3d camPos = CameraManager.pos;
-
-        if (showTrails) {
-            for (int pIdx = 0, sz = planets.size(); pIdx < sz; pIdx++) {
-                Planet p = planets.get(pIdx);
-                int n = p.trailCount;
-                if (n < 2) continue;
-                float r = p.rColor / 255.0f, g = p.gColor / 255.0f, b = p.bColor / 255.0f;
-                for (int i = 0; i < n - 1; i++) {
-                    float alpha = ((float) (i + 1) / n) * 0.65f;
-                    drawOccluded3DSegment(p.getTrailPoint(i), p.getTrailPoint(i + 1), camPos, SCRATCH_FORWARD, SCRATCH_RIGHT, SCRATCH_UP, sWidth, sHeight, 1.0f, r, g, b, alpha, SCRATCH_SEG);
-                }
-                drawOccluded3DSegment(p.getTrailPoint(n - 1), p.pos, camPos, SCRATCH_FORWARD, SCRATCH_RIGHT, SCRATCH_UP, sWidth, sHeight, 1.0f, r, g, b, 0.65f, SCRATCH_SEG);
-            }
-        }
 
         if (isPlacingPlanet && currentSpawnMode == SpawnMode.ORBIT && orbitTarget != null && planets.contains(orbitTarget)) {
             MenuItem item = menuItems[selectedPlanetIndex];
@@ -781,12 +976,12 @@ public class SpaceUI {
                 float lineG = validSpawn ? 0.85f : 0.25f;
                 float lineB = validSpawn ? 0.85f : 0.25f;
 
-                int segments = 128;
+                int segments = 160;
                 for (int s = 0; s <= segments; s++) {
                     double theta = (s * 2.0 * Math.PI) / segments;
                     SCRATCH_CURR_PT.set(center).fma(Math.cos(theta), SCRATCH_RADIAL).fma(Math.sin(theta), SCRATCH_TANGENT);
                     if (s > 0) {
-                        drawOccluded3DSegment(SCRATCH_PREV_PT, SCRATCH_CURR_PT, camPos, SCRATCH_FORWARD, SCRATCH_RIGHT, SCRATCH_UP, sWidth, sHeight, 1.0f, lineR, lineG, lineB, 0.75f, SCRATCH_SEG);
+                        drawOccluded3DSegment(SCRATCH_PREV_PT, SCRATCH_CURR_PT, camPos, SCRATCH_FORWARD, SCRATCH_RIGHT, SCRATCH_UP, sWidth, sHeight, 1.0f, lineR, lineG, lineB, 0.75f, SCRATCH_SEG, true);
                     }
                     SCRATCH_PREV_PT.set(SCRATCH_CURR_PT);
                 }
@@ -795,7 +990,7 @@ public class SpaceUI {
                 for (int rStep = 0; rStep < RAD_SUB; rStep++) {
                     SCRATCH_PREV_PT.set(center).lerp(holoPos, (double) rStep / RAD_SUB);
                     SCRATCH_CURR_PT.set(center).lerp(holoPos, (double) (rStep + 1) / RAD_SUB);
-                    drawOccluded3DSegment(SCRATCH_PREV_PT, SCRATCH_CURR_PT, camPos, SCRATCH_FORWARD, SCRATCH_RIGHT, SCRATCH_UP, sWidth, sHeight, 1.15f, lineR, lineG, lineB, 0.9f, SCRATCH_SEG);
+                    drawOccluded3DSegment(SCRATCH_PREV_PT, SCRATCH_CURR_PT, camPos, SCRATCH_FORWARD, SCRATCH_RIGHT, SCRATCH_UP, sWidth, sHeight, 1.15f, lineR, lineG, lineB, 0.9f, SCRATCH_SEG, true);
                 }
 
                 if (project3DSegment(center, holoPos, camPos, SCRATCH_FORWARD, SCRATCH_RIGHT, SCRATCH_UP, sWidth, sHeight, SCRATCH_SEG)) {
@@ -809,7 +1004,7 @@ public class SpaceUI {
                         double mCamY = mx * SCRATCH_UP.x + my * SCRATCH_UP.y + mz * SCRATCH_UP.z;
                         SCRATCH_UVA[0] = (float) (mCamX / mCamZ);
                         SCRATCH_UVA[1] = (float) (-mCamY / mCamZ);
-                        CameraManager.invertLensWarpUv(SCRATCH_UVA, camPos, SCRATCH_FORWARD, SCRATCH_RIGHT, SCRATCH_UP);
+                        CameraManager.invertLensWarpUv(SCRATCH_UVA, mCamZ, camPos, SCRATCH_FORWARD, SCRATCH_RIGHT, SCRATCH_UP);
                         labelX = 0.5f * sWidth + SCRATCH_UVA[0] * sHeight;
                         labelY = 0.5f * sHeight + SCRATCH_UVA[1] * sHeight;
                     } else {
@@ -825,6 +1020,30 @@ public class SpaceUI {
 
                     drawRotatedSmallText(formatDistanceKm(orbitRadius * BLOCK_TO_KM), labelX, labelY, angle, validSpawn ? 0xFFFFFFFF : 0xFFFF5555);
                 }
+            }
+        }
+
+        if (showTrails) {
+            int totalTrailSegs = 0;
+            for (int pIdx = 0, sz = planets.size(); pIdx < sz; pIdx++) {
+                Planet p = planets.get(pIdx);
+                if (p != null && p.trailCount >= 2) totalTrailSegs += p.trailCount;
+            }
+            int stepStride = Math.max(1, (totalTrailSegs + 1399) / 1400);
+
+            for (int pIdx = 0, sz = planets.size(); pIdx < sz; pIdx++) {
+                Planet p = planets.get(pIdx);
+                if (p == null) continue;
+                int n = p.trailCount;
+                if (n < 2) continue;
+                float r = p.rColor / 255.0f, g = p.gColor / 255.0f, b = p.bColor / 255.0f;
+                int prevIdx = 0;
+                for (int i = stepStride; i < n; i += stepStride) {
+                    float alpha = ((float) i / n) * 0.65f;
+                    drawOccluded3DSegment(p.getTrailPoint(prevIdx), p.getTrailPoint(i), camPos, SCRATCH_FORWARD, SCRATCH_RIGHT, SCRATCH_UP, sWidth, sHeight, 1.0f, r, g, b, alpha, SCRATCH_SEG, false);
+                    prevIdx = i;
+                }
+                drawOccluded3DSegment(p.getTrailPoint(prevIdx), p.pos, camPos, SCRATCH_FORWARD, SCRATCH_RIGHT, SCRATCH_UP, sWidth, sHeight, 1.0f, r, g, b, 0.65f, SCRATCH_SEG, false);
             }
         }
     }
@@ -859,9 +1078,9 @@ public class SpaceUI {
                 int x = sWidth - notifW - 10, y = (int) Math.round(n.currentY);
                 int aInt = (int) (n.alpha * 255);
                 if (aInt > 5) {
-                    fill(x, y, x + notifW, y + notifH, (aInt << 24) | 0x111111);
+                    fill(x, y, x + notifW, y + notifH, (aInt << 24) | (uiColor1 & 0x00FFFFFF));
                     drawOutline(x, y, notifW, notifH, (aInt << 24) | 0x555555);
-                    fill(x + notifW - 3, y, x + notifW, y + notifH, (aInt << 24) | 0x55FF55);
+                    fill(x + notifW - 3, y, x + notifW, y + notifH, (aInt << 24) | (uiColor2 & 0x00FFFFFF));
                     drawSmallText(n.text, x + 10, y + (notifH - SMALL_FONT_HEIGHT) / 2, (aInt << 24) | 0xFFFFFF);
                 }
             }
@@ -872,6 +1091,19 @@ public class SpaceUI {
         if (menuItems == null || menuItems.length == 0) return;
         applyInitialDefaultSettings(window);
         SBoxCompute.applyCustomWindowIcons(window);
+
+        for (int i = 0, sz = planets.size(); i < sz; i++) {
+            Planet p = planets.get(i);
+            if (p != null && (!Double.isFinite(p.currentAngle) || Math.abs(p.currentAngle) >= 3600.0)) {
+                p.currentAngle = Double.isFinite(p.currentAngle) ? (p.currentAngle % 360.0) : 0.0;
+            }
+        }
+        for (int i = 0, sz = fragments.size(); i < sz; i++) {
+            Fragment f = fragments.get(i);
+            if (f != null && (!Double.isFinite(f.angle) || Math.abs(f.angle) >= 3600.0)) {
+                f.angle = Double.isFinite(f.angle) ? (f.angle % 360.0) : 0.0;
+            }
+        }
 
         if (SpaceEngine.fsrEnabled) {
             SBoxVulkanUI.drawFsrEasuRcasPass(sWidth, sHeight, activeRenderW, activeRenderH, SBoxVulkanCanvas.canvasWidth, SBoxVulkanCanvas.canvasHeight);
@@ -891,7 +1123,13 @@ public class SpaceUI {
         if (showGrid && !prevShowGrid && showGravityGrid) showGravityGrid = false;
         if (showGravityGrid && !prevShowGravityGrid && showGrid) showGrid = false;
 
-        if (!initNotif) { addNotification("SpaceSB Engine Active"); initNotif = true; }
+        if (!initNotif) {
+            addNotification("SpaceSB Engine Active");
+            prevMathBits = physicsPrecisionMode;
+            prevPhysMode = physicsSimMode;
+            prevVsync = vsyncEnabled;
+            initNotif = true;
+        }
         if (prevShowGrid != showGrid) { addNotification(tr(17) + ": " + (showGrid ? tr(22) : tr(23))); prevShowGrid = showGrid; }
         if (prevShowGravityGrid != showGravityGrid) { addNotification(tr(33) + ": " + (showGravityGrid ? tr(22) : tr(23))); prevShowGravityGrid = showGravityGrid; }
         if (prevShowTrails != showTrails) { addNotification(tr(18) + ": " + (showTrails ? tr(22) : tr(23))); prevShowTrails = showTrails; }
@@ -899,10 +1137,18 @@ public class SpaceUI {
         if (prevPhysicsEnabled != physicsEnabled) { addNotification(tr(20) + ": " + (physicsEnabled ? tr(22) : tr(23))); prevPhysicsEnabled = physicsEnabled; }
         if (prevMoveTool != isMoveToolActive) { addNotification(tr(16) + ": " + (isMoveToolActive ? tr(22) : tr(23))); prevMoveTool = isMoveToolActive; }
         if (prevDeleteTool != isDeleteToolActive) { addNotification(tr(21) + ": " + (isDeleteToolActive ? tr(22) : tr(23))); prevDeleteTool = isDeleteToolActive; }
+        if (prevSaturnRings != enableSaturnRings) { addNotification(tr(37) + ": " + (enableSaturnRings ? tr(22) : tr(23))); prevSaturnRings = enableSaturnRings; }
+        if (prevAccretionDisk != enableAccretionDisk) { addNotification(tr(38) + ": " + (enableAccretionDisk ? tr(22) : tr(23))); prevAccretionDisk = enableAccretionDisk; }
+        if (prevVsync != vsyncEnabled) { addNotification(tr(4) + ": " + (vsyncEnabled ? tr(22) : tr(23))); prevVsync = vsyncEnabled; }
+        if (prevMathBits != physicsPrecisionMode) { addNotification(tr(41) + ": " + getPhysicsPrecisionLabel(physicsPrecisionMode)); prevMathBits = physicsPrecisionMode; }
+        if (prevPhysMode != physicsSimMode) { addNotification(tr(42) + " " + (physicsSimMode == 0 ? tr(43) : tr(44))); prevPhysMode = physicsSimMode; }
         if (prevPaused != isPaused && !SpaceEngine.isPhotoModeActive) {
             addNotification(isPaused ? "Simulation Paused" : "Simulation Resumed");
             prevPaused = isPaused;
         }
+
+        previewClipRectRender[0] = 0; previewClipRectRender[1] = 0;
+        previewClipRectRender[2] = 0; previewClipRectRender[3] = 0;
 
         if (SpaceEngine.isPhotoModeActive) {
             drawCameraViewfinder(sWidth, sHeight);
@@ -911,7 +1157,6 @@ public class SpaceUI {
         }
 
         double mX, mY;
-        boolean leftDown;
         try (MemoryStack stack = MemoryStack.stackPush()) {
             DoubleBuffer mx = stack.mallocDouble(1), my = stack.mallocDouble(1);
             IntBuffer ww = stack.mallocInt(1), wh = stack.mallocInt(1);
@@ -919,21 +1164,28 @@ public class SpaceUI {
             GLFW.glfwGetWindowSize(window, ww, wh);
             mX = mx.get(0) * ((double) sWidth / Math.max(1, ww.get(0)));
             mY = my.get(0) * ((double) sHeight / Math.max(1, wh.get(0)));
-            leftDown = GLFW.glfwGetMouseButton(window, GLFW.GLFW_MOUSE_BUTTON_LEFT) == GLFW.GLFW_PRESS;
         }
-        boolean leftClickedNow = leftDown && !prevLeftMouseDown;
-        prevLeftMouseDown = leftDown;
 
         String hoverTitle = null, hoverDesc = null;
 
         animAddY += ((isAddMenuOpen ? 1.0 : 0.0) - animAddY) * Math.min(1.0, dtUI * 18.0);
         animToolsY += ((isToolsMenuOpen ? 1.0 : 0.0) - animToolsY) * Math.min(1.0, dtUI * 18.0);
 
+        int barHeight = 26, rectY = sHeight - barHeight;
+        if (CameraManager.isLocked && CameraManager.lockedTarget != null && !isWelcomeMenuOpen) {
+            currentEditMenuW = 230;
+            editMenuAnimX += ((isEditMenuMinimized ? -currentEditMenuW : 0) - editMenuAnimX) * Math.min(1.0, dtUI * 15.0);
+            currentEditMenuX = (int) Math.round(editMenuAnimX);
+        }
+
         if (!isWelcomeMenuOpen) render3DOverlays(sWidth, sHeight);
 
-        int barHeight = 26, rectY = sHeight - barHeight;
         int escPanelW = Math.max(260, (int) (sWidth * 0.28f));
-        if (CameraManager.isLocked || !isEscMenuOpen) isLanguageMenuOpen = false;
+        if (CameraManager.isLocked || !isEscMenuOpen) {
+            isLanguageMenuOpen = false;
+            isMathBitsMenuOpen = false;
+            openColorPicker = 0;
+        }
         if (CameraManager.isLocked) { isEscMenuOpen = false; isResolutionMenuOpen = false; }
 
         double targetEscX = (isEscMenuOpen && !CameraManager.isLocked && !isWelcomeMenuOpen) ? 0.0 : -escPanelW;
@@ -942,287 +1194,713 @@ public class SpaceUI {
 
         if (escX > -escPanelW + 1 && !CameraManager.isLocked && !isWelcomeMenuOpen) {
             int escH = rectY, pad = 12;
-            fill(escX, 0, escX + escPanelW, escH, 0xFF050505);
+            fill(escX, 0, escX + escPanelW, escH, uiColor1);
             fill(escX + escPanelW - 1, 0, escX + escPanelW, escH, 0xFF333333);
 
-            int logoW = Math.min(138, escPanelW - pad * 2), logoH = 44;
-            drawIcon(LOGO_TEX, escX + (escPanelW - logoW) / 2, 6, logoW, logoH);
+            for (int i = 0; i < escSettingHits.length; i++) clearHitbox(escSettingHits[i]);
+            clearHitbox(escVisualTabHit);
+            clearHitbox(escPhysicsTabHit);
+            clearHitbox(escMiscTabHit);
+            clearHitbox(escFsrTrackHit);
+            clearHitbox(escShaderTrackHit);
+            clearHitbox(escParticleTrackHit);
+            clearHitbox(escMathBitsBtnHit);
+            clearHitbox(escMathBitsDropdownHit);
+            clearHitbox(escPhysicsModeTrackHit);
+            clearHitbox(escVolumeTrackHit);
+            clearHitbox(escSaturnRingsHit);
+            clearHitbox(escAccretionDiskHit);
+            clearHitbox(escColor1Hit);
+            clearHitbox(escColor2Hit);
+            clearHitbox(escLangBtnHit);
+            clearHitbox(escColorPopupHit);
+            clearHitbox(escSimSubTabHits[0]);
+            clearHitbox(escSimSubTabHits[1]);
+            clearHitbox(escSimNewSaveBtnHit);
+            clearHitbox(escSimPresetLoadBtnHit);
+            for (int i = 0; i < escSimItemHits.length; i++) clearHitbox(escSimItemHits[i]);
+            for (int i = 0; i < escSimSavedBottomBtnHits.length; i++) clearHitbox(escSimSavedBottomBtnHits[i]);
 
             int topSepY = 55;
-            fill(escX + pad, topSepY, escX + escPanelW - pad, topSepY + 1, 0xFF555555);
-
             int gap = 8, gridBtnW = (escPanelW - pad * 2 - gap) / 2, gridBtnH = 24, gridStartY = topSepY + 6;
-            String[] topTitles = {tr(1), ""};
+            int sepY = gridStartY + gridBtnH + 6;
+            int exitH = 22, exitY = escH - exitH - 8;
 
-            for (int b = 0; b < 2; b++) {
-                int bx = escX + pad + b * (gridBtnW + gap), by = gridStartY;
-                escTopBtnHits[b][0] = bx; escTopBtnHits[b][1] = by;
-                escTopBtnHits[b][2] = isLanguageMenuOpen ? 0 : gridBtnW; escTopBtnHits[b][3] = gridBtnH;
+            int contentTop = sepY + 5;
+            int contentBottom = exitY - 6;
+            int rowX = escX + pad, rowW = escPanelW - pad * 2 - 4, rowH = 17, rowGap = 4, tabH = 20;
+            String onStr = tr(22), offStr = tr(23);
+            boolean anyPopupOpen = isLanguageMenuOpen || isResolutionMenuOpen || isMathBitsMenuOpen || (openColorPicker != 0);
 
-                boolean hovered = (!isLanguageMenuOpen && mX >= bx && mX <= bx + gridBtnW && mY >= by && mY <= by + gridBtnH);
-                fill(bx, by, bx + gridBtnW, by + gridBtnH, b == 0 ? (hovered ? 0xFF1E2634 : 0xFF141820) : 0xFF0D0D0D);
-                drawOutline(bx, by, gridBtnW, gridBtnH, b == 0 ? 0xFF6688AA : 0xFF2E2E2E);
+            if (isSimulationsMenuOpen) {
+                simMenuAnimProgress = Math.min(1.0, simMenuAnimProgress + dtUI * 6.5);
+                double ease = 1.0 - Math.pow(1.0 - simMenuAnimProgress, 3.0);
+                int slideOffsetY = (int) Math.round((1.0 - ease) * 28.0);
 
-                if (!topTitles[b].isEmpty()) {
+                int subBtnW = (rowW - gap) / 2, subBtnH = 22;
+                int subBtnY = contentTop + 2 + slideOffsetY;
+                String[] subTitles = {tr(53), tr(54)};
+                for (int st = 0; st < 2; st++) {
+                    int sbx = rowX + st * (subBtnW + gap);
+                    escSimSubTabHits[st][0] = sbx; escSimSubTabHits[st][1] = subBtnY;
+                    escSimSubTabHits[st][2] = subBtnW; escSimSubTabHits[st][3] = subBtnH;
+                    boolean activeTab = (simMenuTab == st);
+                    boolean sHov = (mX >= sbx && mX <= sbx + subBtnW && mY >= subBtnY && mY <= subBtnY + subBtnH);
+                    fill(sbx, subBtnY, sbx + subBtnW, subBtnY + subBtnH, activeTab ? 0xFF1A2A3A : (sHov ? 0xFF161E28 : 0xFF101318));
+                    drawOutline(sbx, subBtnY, subBtnW, subBtnH, activeTab ? 0xFF55FF55 : 0xFF446688);
+                    drawSmallText(subTitles[st], sbx + (subBtnW - getSmallTextWidth(subTitles[st])) / 2, subBtnY + (subBtnH - SMALL_FONT_HEIGHT) / 2, activeTab ? 0xFF55FF55 : 0xFFDDDDDD);
+                }
+
+                int listTop = contentTop + subBtnH + 8;
+
+                if (simMenuTab == 0) {
+                    // ==================== ВКЛАДКА 1: ГОТОВЫЕ СИМУЛЯЦИИ ====================
+                    int listBottom = exitY - 30;
+                    int cardY = listTop + slideOffsetY;
+                    int bannerH = Math.max(88, (rowW * 9) / 16);
+                    int cardH = bannerH + 26;
+
+                    escSimItemHits[0][0] = rowX; escSimItemHits[0][1] = cardY;
+                    escSimItemHits[0][2] = rowW; escSimItemHits[0][3] = cardH;
+
+                    boolean sel = (selectedPresetSimIndex == 0);
+                    boolean cHov = (mX >= rowX && mX <= rowX + rowW && mY >= cardY && mY <= cardY + cardH);
+                    fill(rowX, cardY, rowX + rowW, cardY + cardH, sel ? 0xFF142218 : (cHov ? 0xFF161A22 : 0xFF0E1014));
+                    drawIcon(SimulationManager.SOLAR_SYSTEM_COVER_TEX, rowX + 2, cardY + 2, rowW - 4, bannerH - 2);
+                    drawOutline(rowX, cardY, rowW, cardH, sel ? 0xFF55FF55 : 0xFF445566);
+
+                    String ssTitle = fitSmallText(tr(60), rowW - 10);
+                    drawSmallText(ssTitle, rowX + (rowW - getSmallTextWidth(ssTitle)) / 2, cardY + bannerH + 5, sel ? 0xFF55FF55 : 0xFFFFFFFF);
+
+                    fill(escX, listBottom, escX + escPanelW - 1, escH, uiColor1);
+                    fill(escX + pad, listBottom, escX + escPanelW - pad, listBottom + 1, 0xFF333333);
+
+                    int loadBtnH = 22, loadBtnY = exitY - loadBtnH - 5;
+                    escSimPresetLoadBtnHit[0] = rowX; escSimPresetLoadBtnHit[1] = loadBtnY;
+                    escSimPresetLoadBtnHit[2] = rowW; escSimPresetLoadBtnHit[3] = loadBtnH;
+                    boolean lHov = (mX >= rowX && mX <= rowX + rowW && mY >= loadBtnY && mY <= loadBtnY + loadBtnH);
+                    fill(rowX, loadBtnY, rowX + rowW, loadBtnY + loadBtnH, lHov ? 0xFF1E4422 : 0xFF142E18);
+                    drawOutline(rowX, loadBtnY, rowW, loadBtnH, 0xFF55FF55);
+                    String loadStr = tr(55);
+                    drawSmallText(loadStr, rowX + (rowW - getSmallTextWidth(loadStr)) / 2, loadBtnY + (loadBtnH - SMALL_FONT_HEIGHT) / 2, 0xFFFFFFFF);
+
+                    escExitBtnHit[0] = rowX; escExitBtnHit[1] = exitY; escExitBtnHit[2] = rowW; escExitBtnHit[3] = exitH;
+                    boolean exitHover = (mX >= rowX && mX <= rowX + rowW && mY >= exitY && mY <= exitY + exitH);
+                    fill(rowX, exitY, rowX + rowW, exitY + exitH, exitHover ? 0xFF661818 : 0xFF441111);
+                    drawOutline(rowX, exitY, rowW, exitH, 0xFFFF4444);
+                    String exitTxt = tr(13);
+                    drawText(exitTxt, rowX + (rowW - getTextWidth(exitTxt)) / 2, exitY + (exitH - FONT_HEIGHT) / 2, 0xFFFFAAAA);
+                } else {
+                    // ==================== ВКЛАДКА 2: СОХРАНЁННЫЕ СИМУЛЯЦИИ ====================
+                    int saveNewH = 20, saveNewY = listTop + slideOffsetY;
+                    escSimNewSaveBtnHit[0] = rowX; escSimNewSaveBtnHit[1] = saveNewY;
+                    escSimNewSaveBtnHit[2] = rowW; escSimNewSaveBtnHit[3] = saveNewH;
+                    boolean snHov = (mX >= rowX && mX <= rowX + rowW && mY >= saveNewY && mY <= saveNewY + saveNewH);
+                    fill(rowX, saveNewY, rowX + rowW, saveNewY + saveNewH, snHov ? 0xFF1C3824 : 0xFF122618);
+                    drawOutline(rowX, saveNewY, rowW, saveNewH, 0xFF55FF55);
+                    String snTxt = tr(59);
+                    drawSmallText(snTxt, rowX + (rowW - getSmallTextWidth(snTxt)) / 2, saveNewY + (saveNewH - SMALL_FONT_HEIGHT) / 2, 0xFF88FF88);
+
+                    int scrollAreaTop = saveNewY + saveNewH + 6;
+                    int bottomAreaTop = escH - 56;
+                    int bannerH = Math.max(76, (rowW * 9) / 18);
+                    int cardH = bannerH + 24;
+                    int curCardY = scrollAreaTop - (int) Math.round(simListScrollY);
+
+                    int savedCount = SimulationManager.savedSimulations.size();
+                    for (int i = 0; i < savedCount && i < escSimItemHits.length; i++) {
+                        SimulationManager.SavedSimEntry entry = SimulationManager.savedSimulations.get(i);
+                        if (curCardY + cardH > scrollAreaTop && curCardY < bottomAreaTop) {
+                            boolean sel = (selectedSavedSimIndex == i);
+                            boolean cHov = (mX >= rowX && mX <= rowX + rowW && mY >= curCardY && mY <= curCardY + cardH);
+                            fill(rowX, curCardY, rowX + rowW, curCardY + cardH, sel ? 0xFF16261A : (cHov ? 0xFF161A22 : 0xFF0E1014));
+
+                            long covDesc = SimulationManager.getOrLoadSavedCoverDescriptor(entry);
+                            if (covDesc != -1L) {
+                                drawQuad(rowX + 2, curCardY + 2, rowX + rowW - 2, curCardY + bannerH, 0, 0, 1, 1, 1, 1, 1, 1, 1, covDesc);
+                            } else {
+                                fill(rowX + 2, curCardY + 2, rowX + rowW - 2, curCardY + bannerH, 0xFF05070B);
+                            }
+
+                            boolean renamingThis = (isRenamingSim && renamingSimIndex == i);
+                            drawOutline(rowX, curCardY, rowW, cardH, renamingThis ? 0xFFFFFF55 : (sel ? 0xFF55FF55 : 0xFF445566));
+
+                            String dispTitle = renamingThis ? fitSmallText(simRenameBuffer + "_", rowW - 14) : fitSmallText(entry.name, rowW - 12);
+                            int titleY = curCardY + bannerH + 4;
+                            if (renamingThis) {
+                                fill(rowX + 4, titleY - 1, rowX + rowW - 4, titleY + SMALL_FONT_HEIGHT + 3, 0xFF060606);
+                                drawOutline(rowX + 4, titleY - 1, rowW - 8, SMALL_FONT_HEIGHT + 4, 0xFF55FF55);
+                            }
+                            drawSmallText(dispTitle, rowX + (rowW - getSmallTextWidth(dispTitle)) / 2, titleY, renamingThis ? 0xFFFFFF55 : (sel ? 0xFF55FF55 : 0xFFFFFFFF));
+
+                            if (curCardY >= scrollAreaTop - 6 && curCardY + cardH <= bottomAreaTop + 6) {
+                                escSimItemHits[i][0] = rowX; escSimItemHits[i][1] = Math.max(scrollAreaTop, curCardY);
+                                escSimItemHits[i][2] = rowW; escSimItemHits[i][3] = Math.min(cardH, bottomAreaTop - escSimItemHits[i][1]);
+                            }
+                        }
+                        curCardY += cardH + 6;
+                    }
+
+                    int totalListH = savedCount * (cardH + 6);
+                    int visListH = Math.max(1, bottomAreaTop - scrollAreaTop);
+                    simListMaxScroll = Math.max(0, totalListH - visListH);
+                    if (simListScrollY > simListMaxScroll) simListScrollY = simListMaxScroll;
+                    if (simListScrollY < 0) simListScrollY = 0;
+
+                    if (simListMaxScroll > 0) {
+                        int sbX = escX + escPanelW - 6;
+                        fill(sbX, scrollAreaTop, sbX + 3, bottomAreaTop, 0xFF161616);
+                        int thumbH = Math.max(18, (int) ((float) visListH / totalListH * visListH));
+                        int thumbY = scrollAreaTop + (int) ((simListScrollY / (float) simListMaxScroll) * (visListH - thumbH));
+                        fill(sbX, thumbY, sbX + 3, thumbY + thumbH, uiColor2);
+                    }
+
+                    // Маскировка верхнего и нижнего краёв списка + 4 кнопки в 2 ряда в самом низу
+                    fill(escX, contentTop, escX + escPanelW - 1, scrollAreaTop, uiColor1);
+                    for (int st = 0; st < 2; st++) {
+                        int sbx = escSimSubTabHits[st][0], sby = escSimSubTabHits[st][1];
+                        boolean activeTab = (simMenuTab == st);
+                        fill(sbx, sby, sbx + subBtnW, sby + subBtnH, activeTab ? 0xFF1A2A3A : 0xFF101318);
+                        drawOutline(sbx, sby, subBtnW, subBtnH, activeTab ? 0xFF55FF55 : 0xFF446688);
+                        drawSmallText(subTitles[st], sbx + (subBtnW - getSmallTextWidth(subTitles[st])) / 2, sby + (subBtnH - SMALL_FONT_HEIGHT) / 2, activeTab ? 0xFF55FF55 : 0xFFDDDDDD);
+                    }
+                    fill(rowX, saveNewY, rowX + rowW, saveNewY + saveNewH, snHov ? 0xFF1C3824 : 0xFF122618);
+                    drawOutline(rowX, saveNewY, rowW, saveNewH, 0xFF55FF55);
+                    drawSmallText(snTxt, rowX + (rowW - getSmallTextWidth(snTxt)) / 2, saveNewY + (saveNewH - SMALL_FONT_HEIGHT) / 2, 0xFF88FF88);
+
+                    fill(escX, bottomAreaTop, escX + escPanelW - 1, escH, uiColor1);
+                    fill(escX + pad, bottomAreaTop, escX + escPanelW - pad, bottomAreaTop + 1, 0xFF333333);
+
+                    String[] botLabels = {tr(55), tr(56), tr(57), tr(58)};
+                    int bBtnW = (rowW - gap) / 2, bBtnH = 20;
+                    for (int b = 0; b < 4; b++) {
+                        int col = b % 2, r = b / 2;
+                        int bx = rowX + col * (bBtnW + gap);
+                        int by = bottomAreaTop + 5 + r * (bBtnH + 5);
+                        escSimSavedBottomBtnHits[b][0] = bx; escSimSavedBottomBtnHits[b][1] = by;
+                        escSimSavedBottomBtnHits[b][2] = bBtnW; escSimSavedBottomBtnHits[b][3] = bBtnH;
+
+                        boolean bHov = (mX >= bx && mX <= bx + bBtnW && mY >= by && mY <= by + bBtnH);
+                        int bgCol = (b == 2) ? (bHov ? 0xFF551616 : 0xFF331010)
+                                : ((b == 0) ? (bHov ? 0xFF1C3E20 : 0xFF122816) : (bHov ? 0xFF1E2836 : 0xFF141822));
+                        int outCol = (b == 2) ? 0xFFFF5555 : ((b == 0) ? 0xFF55FF55 : 0xFF557799);
+                        fill(bx, by, bx + bBtnW, by + bBtnH, bgCol);
+                        drawOutline(bx, by, bBtnW, bBtnH, outCol);
+                        drawSmallText(botLabels[b], bx + (bBtnW - getSmallTextWidth(botLabels[b])) / 2, by + (bBtnH - SMALL_FONT_HEIGHT) / 2, 0xFFFFFFFF);
+                    }
+                }
+
+                // Шапка логотипа и 2 верхние кнопки ESC ("Новая симуляция" | "Симуляции")
+                fill(escX, 0, escX + escPanelW - 1, contentTop, uiColor1);
+                int logoW = Math.min(138, escPanelW - pad * 2), logoH = 44;
+                drawIcon(LOGO_TEX, escX + (escPanelW - logoW) / 2, 6, logoW, logoH);
+                fill(escX + pad, topSepY, escX + escPanelW - pad, topSepY + 1, 0xFF555555);
+
+                String[] topTitles = {tr(1), tr(52)};
+                for (int b = 0; b < 2; b++) {
+                    int bx = escX + pad + b * (gridBtnW + gap), by = gridStartY;
+                    escTopBtnHits[b][0] = bx; escTopBtnHits[b][1] = by;
+                    escTopBtnHits[b][2] = gridBtnW; escTopBtnHits[b][3] = gridBtnH;
+
+                    boolean hovered = (mX >= bx && mX <= bx + gridBtnW && mY >= by && mY <= by + gridBtnH);
+                    boolean activeTop = (b == 1 && isSimulationsMenuOpen);
+                    fill(bx, by, bx + gridBtnW, by + gridBtnH, activeTop ? 0xFF1C3224 : (hovered ? 0xFF1E2634 : 0xFF141820));
+                    drawOutline(bx, by, gridBtnW, gridBtnH, activeTop ? 0xFF55FF55 : 0xFF6688AA);
+                    drawSmallText(topTitles[b], bx + (gridBtnW - getSmallTextWidth(topTitles[b])) / 2, by + (gridBtnH - SMALL_FONT_HEIGHT) / 2, activeTop ? 0xFF55FF55 : 0xFFFFFFFF);
+                }
+                fill(escX + pad, sepY, escX + escPanelW - pad, sepY + 1, 0xFF333333);
+            } else {
+                int curY = contentTop - (int) Math.round(escMenuScrollY);
+
+                if (curY + tabH > contentTop && curY < contentBottom) {
+                    boolean vHov = (!anyPopupOpen && mX >= rowX && mX <= rowX + rowW && mY >= curY && mY <= curY + tabH);
+                    drawExpandableTabHeader(tr(35), isVisualTabOpen, rowX, curY, rowW, tabH, vHov);
+                    if (curY >= contentTop - 2 && curY + tabH <= contentBottom + 2) {
+                        escVisualTabHit[0] = rowX; escVisualTabHit[1] = curY;
+                        escVisualTabHit[2] = anyPopupOpen ? 0 : rowW; escVisualTabHit[3] = tabH;
+                    }
+                }
+                curY += tabH + 4;
+
+                if (isVisualTabOpen) {
+                    if (curY + rowH > contentTop && curY < contentBottom) {
+                        drawSettingRow("AMD FSR 1.0", fsrEnabled ? onStr : offStr, rowX, curY, rowW, rowH, fsrEnabled);
+                        if (curY >= contentTop - 2 && curY + rowH <= contentBottom + 2) {
+                            escSettingHits[0][0] = rowX; escSettingHits[0][1] = curY;
+                            escSettingHits[0][2] = anyPopupOpen ? 0 : rowW; escSettingHits[0][3] = rowH;
+                        }
+                    }
+                    curY += rowH + rowGap;
+
+                    if (curY + rowH > contentTop && curY < contentBottom) {
+                        drawSmallText(tr(3), rowX, curY + 2, fsrEnabled ? 0xFFDDDDDD : 0xFF777777);
+                        int fTrackX = rowX + 82, fTrackW = rowW - 82, fTrackH = 14, fZoneW = fTrackW / 4;
+                        if (curY >= contentTop - 2 && curY + rowH <= contentBottom + 2) {
+                            escFsrTrackHit[0] = fTrackX; escFsrTrackHit[1] = curY + 2;
+                            escFsrTrackHit[2] = anyPopupOpen ? 0 : fTrackW; escFsrTrackHit[3] = fTrackH;
+                        }
+                        for (int z = 0; z < 4; z++) {
+                            int zx0 = fTrackX + z * fZoneW, zx1 = (z == 3) ? (fTrackX + fTrackW) : (zx0 + fZoneW);
+                            fill(zx0, curY + 2, zx1, curY + 2 + fTrackH, (fsrQualityIndex == z) ? (fsrEnabled ? 0xFFDCDCDC : 0xFF666666) : 0xFF181818);
+                            if (z > 0) fill(zx0, curY + 3, zx0 + 1, curY + 1 + fTrackH, 0xFF333333);
+                        }
+                        drawOutline(fTrackX, curY + 2, fTrackW, fTrackH, fsrEnabled ? 0xFFAAAAAA : 0xFF444444);
+                        if (!isDraggingFsrCube) {
+                            fsrSliderPos += (((fsrQualityIndex + 0.5f) / 4.0f) - fsrSliderPos) * (float) Math.min(1.0, dtUI * 20.0);
+                        }
+                        int fCubeSize = 16;
+                        int fCubeX = Math.max(fTrackX, Math.min(fTrackX + fTrackW - fCubeSize, fTrackX + Math.round(fsrSliderPos * fTrackW) - fCubeSize / 2));
+                        fill(fCubeX, curY + 1, fCubeX + fCubeSize, curY + 1 + fCubeSize, 0xFFFFFFFF);
+                        drawOutline(fCubeX, curY + 1, fCubeSize, fCubeSize, 0xFF000000);
+                        fill(fCubeX + 3, curY + 4, fCubeX + fCubeSize - 3, curY + fCubeSize - 2, fsrEnabled ? uiColor2 : 0xFF999999);
+                    }
+                    curY += rowH + rowGap;
+
+                    if (curY + rowH > contentTop && curY < contentBottom) {
+                        drawSettingRow("HDR", hdrEnabled ? onStr : offStr, rowX, curY, rowW, rowH, hdrEnabled);
+                        if (curY >= contentTop - 2 && curY + rowH <= contentBottom + 2) {
+                            escSettingHits[2][0] = rowX; escSettingHits[2][1] = curY;
+                            escSettingHits[2][2] = anyPopupOpen ? 0 : rowW; escSettingHits[2][3] = rowH;
+                        }
+                    }
+                    curY += rowH + rowGap;
+
+                    if (curY + rowH > contentTop && curY < contentBottom) {
+                        drawSettingRow(tr(4), vsyncEnabled ? onStr : offStr, rowX, curY, rowW, rowH, vsyncEnabled);
+                        if (curY >= contentTop - 2 && curY + rowH <= contentBottom + 2) {
+                            escSettingHits[4][0] = rowX; escSettingHits[4][1] = curY;
+                            escSettingHits[4][2] = anyPopupOpen ? 0 : rowW; escSettingHits[4][3] = rowH;
+                        }
+                    }
+                    curY += rowH + rowGap;
+
+                    int[] res = RESOLUTIONS[resolutionIndex];
+                    if (curY + rowH > contentTop && curY < contentBottom) {
+                        drawSettingRow(tr(5), res[0] + "x" + res[1] + (isResolutionMenuOpen ? " ^" : " v"), rowX, curY, rowW, rowH, true);
+                        if (curY >= contentTop - 2 && curY + rowH <= contentBottom + 2) {
+                            escSettingHits[5][0] = rowX; escSettingHits[5][1] = curY;
+                            escSettingHits[5][2] = anyPopupOpen ? 0 : rowW; escSettingHits[5][3] = rowH;
+                        }
+                    }
+                    curY += rowH + rowGap;
+
+                    if (curY + rowH > contentTop && curY < contentBottom) {
+                        drawSettingRow(tr(6), isFullscreen ? tr(7) : tr(8), rowX, curY, rowW, rowH, isFullscreen);
+                        if (curY >= contentTop - 2 && curY + rowH <= contentBottom + 2) {
+                            escSettingHits[6][0] = rowX; escSettingHits[6][1] = curY;
+                            escSettingHits[6][2] = anyPopupOpen ? 0 : rowW; escSettingHits[6][3] = rowH;
+                        }
+                    }
+                    curY += rowH + rowGap;
+
+                    if (curY + rowH > contentTop && curY < contentBottom) {
+                        drawSmallText(tr(11), rowX, curY + 1, 0xFFDDDDDD);
+                        int sTrackX = rowX + 82, sTrackW = rowW - 82, sTrackH = 14, sZoneW = sTrackW / 3;
+                        if (curY >= contentTop - 2 && curY + rowH <= contentBottom + 2) {
+                            escShaderTrackHit[0] = sTrackX; escShaderTrackHit[1] = curY;
+                            escShaderTrackHit[2] = anyPopupOpen ? 0 : sTrackW; escShaderTrackHit[3] = sTrackH;
+                        }
+                        fill(sTrackX, curY, sTrackX + sZoneW, curY + sTrackH, shaderMode == 2 ? 0xFF28BB38 : 0xFF154E1B);
+                        fill(sTrackX + sZoneW, curY, sTrackX + sZoneW * 2, curY + sTrackH, shaderMode == 1 ? 0xFFCCAA20 : 0xFF554410);
+                        fill(sTrackX + sZoneW * 2, curY, sTrackX + sTrackW, curY + sTrackH, shaderMode == 0 ? 0xFFCC2828 : 0xFF551515);
+                        drawOutline(sTrackX, curY, sTrackW, sTrackH, 0xFF444444);
+                        fill(sTrackX + sZoneW, curY + 1, sTrackX + sZoneW + 1, curY + sTrackH - 1, 0xFF222222);
+                        fill(sTrackX + sZoneW * 2, curY + 1, sTrackX + sZoneW * 2 + 1, curY + sTrackH - 1, 0xFF222222);
+
+                        if (!isDraggingShaderCube) {
+                            float targetShPos = (shaderMode == 2) ? 0.166f : (shaderMode == 1 ? 0.5f : 0.833f);
+                            shaderSliderPos += (targetShPos - shaderSliderPos) * (float) Math.min(1.0, dtUI * 20.0);
+                        }
+                        int sCubeSize = 16;
+                        int sCubeX = Math.max(sTrackX, Math.min(sTrackX + sTrackW - sCubeSize, sTrackX + Math.round(shaderSliderPos * sTrackW) - sCubeSize / 2));
+                        fill(sCubeX, curY - 1, sCubeX + sCubeSize, curY - 1 + sCubeSize, 0xFFEEEEEE);
+                        drawOutline(sCubeX, curY - 1, sCubeSize, sCubeSize, 0xFF000000);
+                        fill(sCubeX + 3, curY + 2, sCubeX + sCubeSize - 3, curY + sCubeSize - 4, shaderMode == 2 ? 0xFF44FF55 : (shaderMode == 1 ? 0xFFFFDD33 : 0xFFFF4444));
+                    }
+                    curY += rowH + rowGap;
+
+                    if (curY + rowH > contentTop && curY < contentBottom) {
+                        drawSmallText(tr(12), rowX, curY + 1, 0xFFDDDDDD);
+                        int trackX = rowX + 82, trackW = rowW - 82, trackH = 14, zoneW = trackW / 4;
+                        if (curY >= contentTop - 2 && curY + rowH <= contentBottom + 2) {
+                            escParticleTrackHit[0] = trackX; escParticleTrackHit[1] = curY;
+                            escParticleTrackHit[2] = anyPopupOpen ? 0 : trackW; escParticleTrackHit[3] = trackH;
+                        }
+                        fill(trackX, curY, trackX + zoneW, curY + trackH, particlePreset == 0 ? 0xFF28BB38 : 0xFF154E1B);
+                        fill(trackX + zoneW, curY, trackX + zoneW * 2, curY + trackH, particlePreset == 1 ? 0xFFCCAA20 : 0xFF554410);
+                        fill(trackX + zoneW * 2, curY, trackX + zoneW * 3, curY + trackH, particlePreset == 2 ? 0xFFCC2828 : 0xFF551515);
+                        fill(trackX + zoneW * 3, curY, trackX + trackW, curY + trackH, particlePreset == 3 ? 0xFF8B0032 : 0xFF3B0519);
+                        drawOutline(trackX, curY, trackW, trackH, 0xFF444444);
+                        fill(trackX + zoneW, curY + 1, trackX + zoneW + 1, curY + trackH - 1, 0xFF222222);
+                        fill(trackX + zoneW * 2, curY + 1, trackX + zoneW * 2 + 1, curY + trackH - 1, 0xFF222222);
+                        fill(trackX + zoneW * 3, curY + 1, trackX + zoneW * 3 + 1, curY + trackH - 1, 0xFF222222);
+
+                        if (!isDraggingParticleCube) {
+                            particleSliderPos += (((particlePreset + 0.5f) / 4.0f) - particleSliderPos) * (float) Math.min(1.0, dtUI * 20.0);
+                        }
+                        int cubeSize = 16;
+                        int cubeX = Math.max(trackX, Math.min(trackX + trackW - cubeSize, trackX + Math.round(particleSliderPos * trackW) - cubeSize / 2));
+                        int pCubeInnerCol = (particlePreset == 0) ? 0xFF44FF55 : (particlePreset == 1 ? 0xFFFFDD33 : (particlePreset == 2 ? 0xFFFF4444 : 0xFFB80F48));
+                        fill(cubeX, curY - 1, cubeX + cubeSize, curY - 1 + cubeSize, 0xFFEEEEEE);
+                        drawOutline(cubeX, curY - 1, cubeSize, cubeSize, 0xFF000000);
+                        fill(cubeX + 3, curY + 2, cubeX + cubeSize - 3, curY + cubeSize - 4, pCubeInnerCol);
+
+                        if (!anyPopupOpen && mX >= rowX && mX <= rowX + rowW && mY >= curY - 2 && mY <= curY + trackH + 2) {
+                            String limStr = (particlePreset == 3) ? "UNLIMITED (Burgundy Ultra)" : (PhysicsEngine.getEffectiveDebrisLimit() + " Max");
+                            hoverTitle = tr(12) + " " + getParticlePresetLabel(particlePreset) + " — " + limStr;
+                            hoverDesc = "Green (3.2k) | Yellow (12.8k) | Red (25.6k) | Burgundy (Ultra Unlimited)";
+                        }
+                    }
+                    curY += rowH + rowGap;
+
+                    if (curY + rowH > contentTop && curY < contentBottom) {
+                        drawSettingRow(tr(37), enableSaturnRings ? onStr : offStr, rowX, curY, rowW, rowH, enableSaturnRings);
+                        if (curY >= contentTop - 2 && curY + rowH <= contentBottom + 2) {
+                            escSaturnRingsHit[0] = rowX; escSaturnRingsHit[1] = curY;
+                            escSaturnRingsHit[2] = anyPopupOpen ? 0 : rowW; escSaturnRingsHit[3] = rowH;
+                        }
+                    }
+                    curY += rowH + rowGap;
+
+                    if (curY + rowH > contentTop && curY < contentBottom) {
+                        drawSettingRow(tr(38), enableAccretionDisk ? onStr : offStr, rowX, curY, rowW, rowH, enableAccretionDisk);
+                        if (curY >= contentTop - 2 && curY + rowH <= contentBottom + 2) {
+                            escAccretionDiskHit[0] = rowX; escAccretionDiskHit[1] = curY;
+                            escAccretionDiskHit[2] = anyPopupOpen ? 0 : rowW; escAccretionDiskHit[3] = rowH;
+                        }
+                    }
+                    curY += rowH + rowGap;
+
+                    if (curY + rowH > contentTop && curY < contentBottom) {
+                        drawColorSettingRow(tr(39), uiColor1, rowX, curY, rowW, rowH, openColorPicker == 1);
+                        if (curY >= contentTop - 2 && curY + rowH <= contentBottom + 2) {
+                            escColor1Hit[0] = rowX; escColor1Hit[1] = curY;
+                            escColor1Hit[2] = (isLanguageMenuOpen || isResolutionMenuOpen || isMathBitsMenuOpen) ? 0 : rowW; escColor1Hit[3] = rowH;
+                        }
+                    }
+                    curY += rowH + rowGap;
+
+                    if (curY + rowH > contentTop && curY < contentBottom) {
+                        drawColorSettingRow(tr(40), uiColor2, rowX, curY, rowW, rowH, openColorPicker == 2);
+                        if (curY >= contentTop - 2 && curY + rowH <= contentBottom + 2) {
+                            escColor2Hit[0] = rowX; escColor2Hit[1] = curY;
+                            escColor2Hit[2] = (isLanguageMenuOpen || isResolutionMenuOpen || isMathBitsMenuOpen) ? 0 : rowW; escColor2Hit[3] = rowH;
+                        }
+                    }
+                    curY += rowH + 6;
+                }
+
+                if (curY + tabH > contentTop && curY < contentBottom) {
+                    boolean pHov = (!anyPopupOpen && mX >= rowX && mX <= rowX + rowW && mY >= curY && mY <= curY + tabH);
+                    drawExpandableTabHeader(tr(20), isPhysicsTabOpen, rowX, curY, rowW, tabH, pHov);
+                    if (curY >= contentTop - 2 && curY + tabH <= contentBottom + 2) {
+                        escPhysicsTabHit[0] = rowX; escPhysicsTabHit[1] = curY;
+                        escPhysicsTabHit[2] = anyPopupOpen ? 0 : rowW; escPhysicsTabHit[3] = tabH;
+                    }
+                }
+                curY += tabH + 4;
+
+                if (isPhysicsTabOpen) {
+                    if (curY + rowH > contentTop && curY < contentBottom) {
+                        String bitsVal = getPhysicsPrecisionLabel(physicsPrecisionMode) + (isMathBitsMenuOpen ? " ^" : " v");
+                        drawSettingRow(tr(41), bitsVal, rowX, curY, rowW, rowH, true);
+                        if (curY >= contentTop - 2 && curY + rowH <= contentBottom + 2) {
+                            escMathBitsBtnHit[0] = rowX; escMathBitsBtnHit[1] = curY;
+                            escMathBitsBtnHit[2] = anyPopupOpen ? 0 : rowW; escMathBitsBtnHit[3] = rowH;
+                        }
+                    }
+                    curY += rowH + rowGap;
+
+                    if (curY + rowH > contentTop && curY < contentBottom) {
+                        drawSmallText(tr(42), rowX, curY + 1, 0xFFDDDDDD);
+                        int mTrackX = rowX + 82, mTrackW = rowW - 82, mTrackH = 14, mZoneW = mTrackW / 2;
+                        if (curY >= contentTop - 2 && curY + rowH <= contentBottom + 2) {
+                            escPhysicsModeTrackHit[0] = mTrackX; escPhysicsModeTrackHit[1] = curY;
+                            escPhysicsModeTrackHit[2] = anyPopupOpen ? 0 : mTrackW; escPhysicsModeTrackHit[3] = mTrackH;
+                        }
+                        fill(mTrackX, curY, mTrackX + mZoneW, curY + mTrackH, physicsSimMode == 0 ? 0xFF28BB38 : 0xFF154E1B);
+                        fill(mTrackX + mZoneW, curY, mTrackX + mTrackW, curY + mTrackH, physicsSimMode == 1 ? 0xFFCC2828 : 0xFF551515);
+                        drawOutline(mTrackX, curY, mTrackW, mTrackH, 0xFF444444);
+                        fill(mTrackX + mZoneW, curY + 1, mTrackX + mZoneW + 1, curY + mTrackH - 1, 0xFF222222);
+
+                        if (!isDraggingPhysicsModeCube) {
+                            float targetModePos = (physicsSimMode == 0) ? 0.25f : 0.75f;
+                            physicsModeSliderPos += (targetModePos - physicsModeSliderPos) * (float) Math.min(1.0, dtUI * 20.0);
+                        }
+                        int mdCubeSize = 16;
+                        int mdCubeX = Math.max(mTrackX, Math.min(mTrackX + mTrackW - mdCubeSize, mTrackX + Math.round(physicsModeSliderPos * mTrackW) - mdCubeSize / 2));
+                        fill(mdCubeX, curY - 1, mdCubeX + mdCubeSize, curY - 1 + mdCubeSize, 0xFFEEEEEE);
+                        drawOutline(mdCubeX, curY - 1, mdCubeSize, mdCubeSize, 0xFF000000);
+                        fill(mdCubeX + 3, curY + 2, mdCubeX + mdCubeSize - 3, curY + mdCubeSize - 4, physicsSimMode == 0 ? 0xFF44FF55 : 0xFFFF4444);
+
+                        if (!anyPopupOpen && mX >= rowX && mX <= rowX + rowW && mY >= curY - 2 && mY <= curY + mTrackH + 2) {
+                            hoverTitle = tr(42) + " " + (physicsSimMode == 0 ? tr(43) : tr(44));
+                            hoverDesc = "Green: " + tr(43) + " (Fast Kepler) | Red: " + tr(44) + " (GR + J2 + Radiosity)";
+                        }
+                    }
+                    curY += rowH + 6;
+                }
+
+                if (curY + tabH > contentTop && curY < contentBottom) {
+                    boolean mHov = (!anyPopupOpen && mX >= rowX && mX <= rowX + rowW && mY >= curY && mY <= curY + tabH);
+                    drawExpandableTabHeader(tr(36), isMiscTabOpen, rowX, curY, rowW, tabH, mHov);
+                    if (curY >= contentTop - 2 && curY + tabH <= contentBottom + 2) {
+                        escMiscTabHit[0] = rowX; escMiscTabHit[1] = curY;
+                        escMiscTabHit[2] = anyPopupOpen ? 0 : rowW; escMiscTabHit[3] = tabH;
+                    }
+                }
+                curY += tabH + 4;
+
+                if (isMiscTabOpen) {
+                    if (curY + rowH > contentTop && curY < contentBottom) {
+                        drawSettingRow(tr(9), showFpsOverlay ? onStr : offStr, rowX, curY, rowW, rowH, showFpsOverlay);
+                        if (curY >= contentTop - 2 && curY + rowH <= contentBottom + 2) {
+                            escSettingHits[7][0] = rowX; escSettingHits[7][1] = curY;
+                            escSettingHits[7][2] = anyPopupOpen ? 0 : rowW; escSettingHits[7][3] = rowH;
+                        }
+                    }
+                    curY += rowH + rowGap;
+
+                    if (curY + rowH > contentTop && curY < contentBottom) {
+                        drawSettingRow(tr(10), photoModeFeatureEnabled ? onStr : offStr, rowX, curY, rowW, rowH, photoModeFeatureEnabled);
+                        if (curY >= contentTop - 2 && curY + rowH <= contentBottom + 2) {
+                            escSettingHits[8][0] = rowX; escSettingHits[8][1] = curY;
+                            escSettingHits[8][2] = anyPopupOpen ? 0 : rowW; escSettingHits[8][3] = rowH;
+                        }
+                    }
+                    curY += rowH + rowGap;
+
+                    if (curY + rowH > contentTop && curY < contentBottom) {
+                        drawSmallText(tr(34), rowX, curY + 1, 0xFFDDDDDD);
+                        int vTrackX = rowX + 82, vTrackW = rowW - 82, vTrackH = 14;
+                        if (curY >= contentTop - 2 && curY + rowH <= contentBottom + 2) {
+                            escVolumeTrackHit[0] = vTrackX; escVolumeTrackHit[1] = curY;
+                            escVolumeTrackHit[2] = anyPopupOpen ? 0 : vTrackW; escVolumeTrackHit[3] = vTrackH;
+                        }
+                        fill(vTrackX, curY, vTrackX + vTrackW, curY + vTrackH, 0xFF141820);
+                        int vFillW = Math.round(musicVolume * vTrackW);
+                        if (vFillW > 0) {
+                            fill(vTrackX, curY, vTrackX + vFillW, curY + vTrackH, musicVolume > 0.005f ? 0xFF2266AA : 0xFF282828);
+                        }
+                        drawOutline(vTrackX, curY, vTrackW, vTrackH, 0xFF445566);
+
+                        String volLabel = (musicVolume <= 0.005f) ? tr(23) : (Math.round(musicVolume * 100.0f) + "%");
+                        drawSmallText(volLabel, vTrackX + (vTrackW - getSmallTextWidth(volLabel)) / 2, curY + 1, 0xFFFFFFFF);
+
+                        int vCubeSize = 16;
+                        int vCubeX = Math.max(vTrackX, Math.min(vTrackX + vTrackW - vCubeSize, vTrackX + vFillW - vCubeSize / 2));
+                        fill(vCubeX, curY - 1, vCubeX + vCubeSize, curY - 1 + vCubeSize, 0xFFEEEEEE);
+                        drawOutline(vCubeX, curY - 1, vCubeSize, vCubeSize, 0xFF000000);
+                        fill(vCubeX + 3, curY + 2, vCubeX + vCubeSize - 3, curY + vCubeSize - 4, musicVolume > 0.005f ? 0xFF44AAFF : 0xFF666666);
+                    }
+                    curY += rowH + rowGap;
+
+                    int langBtnH = 20;
+                    if (curY + langBtnH > contentTop && curY < contentBottom) {
+                        boolean langHover = (!anyPopupOpen && mX >= rowX && mX <= rowX + rowW && mY >= curY && mY <= curY + langBtnH);
+                        fill(rowX, curY, rowX + rowW, curY + langBtnH, (isLanguageMenuOpen || langHover) ? 0xFF1A2836 : 0xFF12161E);
+                        drawOutline(rowX, curY, rowW, langBtnH, isLanguageMenuOpen ? 0xFF55FF55 : 0xFF557799);
+                        drawSmallText(tr(0) + ":", rowX + 6, curY + (langBtnH - SMALL_FONT_HEIGHT) / 2, 0xFFDDDDDD);
+
+                        String curLangStr = LANGUAGE_NAMES[currentLanguage] + (isLanguageMenuOpen ? " ^" : " v");
+                        int curLangW = getSmallTextWidth(curLangStr), flagW = 18, flagH = 12;
+                        int textRightX = rowX + rowW - curLangW - 6;
+                        drawCountryFlag(currentLanguage, textRightX - flagW - 6, curY + (langBtnH - flagH) / 2, flagW, flagH);
+                        drawSmallText(curLangStr, textRightX, curY + (langBtnH - SMALL_FONT_HEIGHT) / 2, 0xFF55FF55);
+
+                        if (curY >= contentTop - 2 && curY + langBtnH <= contentBottom + 2) {
+                            escLangBtnHit[0] = rowX; escLangBtnHit[1] = curY;
+                            escLangBtnHit[2] = (isResolutionMenuOpen || isMathBitsMenuOpen || openColorPicker != 0) ? 0 : rowW; escLangBtnHit[3] = langBtnH;
+                        }
+                    }
+                    curY += langBtnH + 6;
+                }
+
+                int totalContentH = (curY + (int) Math.round(escMenuScrollY)) - contentTop;
+                int visibleContentH = Math.max(1, contentBottom - contentTop);
+                escMenuMaxScroll = Math.max(0, totalContentH - visibleContentH);
+                if (escMenuScrollY > escMenuMaxScroll) escMenuScrollY = escMenuMaxScroll;
+                if (escMenuScrollY < 0) escMenuScrollY = 0;
+
+                if (escMenuMaxScroll > 0) {
+                    int sbX = escX + escPanelW - 6, sbY = contentTop, sbH = visibleContentH;
+                    fill(sbX, sbY, sbX + 3, sbY + sbH, 0xFF161616);
+                    int thumbH = Math.max(18, (int) ((float) visibleContentH / totalContentH * sbH));
+                    int thumbY = sbY + (int) ((escMenuScrollY / (float) escMenuMaxScroll) * (sbH - thumbH));
+                    fill(sbX, thumbY, sbX + 3, thumbY + thumbH, uiColor2);
+                }
+
+                fill(escX, 0, escX + escPanelW - 1, contentTop, uiColor1);
+                int logoW = Math.min(138, escPanelW - pad * 2), logoH = 44;
+                drawIcon(LOGO_TEX, escX + (escPanelW - logoW) / 2, 6, logoW, logoH);
+                fill(escX + pad, topSepY, escX + escPanelW - pad, topSepY + 1, 0xFF555555);
+
+                String[] topTitles = {tr(1), tr(52)};
+                for (int b = 0; b < 2; b++) {
+                    int bx = escX + pad + b * (gridBtnW + gap), by = gridStartY;
+                    escTopBtnHits[b][0] = bx; escTopBtnHits[b][1] = by;
+                    escTopBtnHits[b][2] = anyPopupOpen ? 0 : gridBtnW; escTopBtnHits[b][3] = gridBtnH;
+
+                    boolean hovered = (!anyPopupOpen && mX >= bx && mX <= bx + gridBtnW && mY >= by && mY <= by + gridBtnH);
+                    fill(bx, by, bx + gridBtnW, by + gridBtnH, hovered ? 0xFF1E2634 : 0xFF141820);
+                    drawOutline(bx, by, gridBtnW, gridBtnH, 0xFF6688AA);
                     drawSmallText(topTitles[b], bx + (gridBtnW - getSmallTextWidth(topTitles[b])) / 2, by + (gridBtnH - SMALL_FONT_HEIGHT) / 2, 0xFFFFFFFF);
                 }
-                if (hovered && b == 0) {
-                    hoverTitle = tr(1);
-                    hoverDesc = "Clears all planets and resets simulation time to 2026";
-                }
-            }
+                fill(escX + pad, sepY, escX + escPanelW - pad, sepY + 1, 0xFF333333);
 
-            int sepY = gridStartY + gridBtnH + 6;
-            fill(escX + pad, sepY, escX + escPanelW - pad, sepY + 1, 0xFF333333);
-            drawSmallText(tr(2), escX + pad, sepY + 4, 0xFF888888);
+                fill(escX, contentBottom, escX + escPanelW - 1, escH, uiColor1);
+                fill(escX + pad, contentBottom, escX + escPanelW - pad, contentBottom + 1, 0xFF333333);
 
-            int rowX = escX + pad, rowW = escPanelW - pad * 2, rowH = 17, rowGap = 4, startSetY = sepY + 18;
-            String onStr = tr(22), offStr = tr(23);
+                escExitBtnHit[0] = rowX; escExitBtnHit[1] = exitY; escExitBtnHit[2] = anyPopupOpen ? 0 : rowW; escExitBtnHit[3] = exitH;
+                boolean exitHover = (!anyPopupOpen && mX >= rowX && mX <= rowX + rowW && mY >= exitY && mY <= exitY + exitH);
+                fill(rowX, exitY, rowX + rowW, exitY + exitH, exitHover ? 0xFF661818 : 0xFF441111);
+                drawOutline(rowX, exitY, rowW, exitH, 0xFFFF4444);
+                String exitTxt = tr(13);
+                drawText(exitTxt, rowX + (rowW - getTextWidth(exitTxt)) / 2, exitY + (exitH - FONT_HEIGHT) / 2, 0xFFFFAAAA);
 
-            escSettingHits[0][0] = rowX; escSettingHits[0][1] = startSetY; escSettingHits[0][2] = isLanguageMenuOpen ? 0 : rowW; escSettingHits[0][3] = rowH;
-            drawSettingRow("AMD FSR 1.0", fsrEnabled ? onStr : offStr, rowX, startSetY, rowW, rowH, fsrEnabled);
+                if (isLanguageMenuOpen && escLangBtnHit[3] > 0) {
+                    int langItemH = 18, langMenuH = LANGUAGE_NAMES.length * langItemH;
+                    int langMenuX = rowX, langMenuY = Math.max(contentTop, escLangBtnHit[1] - langMenuH - 2);
+                    int flagW = 18, flagH = 12;
+                    escLangDropdownHit[0] = langMenuX; escLangDropdownHit[1] = langMenuY; escLangDropdownHit[2] = rowW; escLangDropdownHit[3] = langMenuH;
 
-            int fsrRowY = startSetY + (rowH + rowGap);
-            drawSmallText(tr(3), rowX, fsrRowY + 2, fsrEnabled ? 0xFFDDDDDD : 0xFF777777);
-
-            int fTrackX = rowX + 74, fTrackW = rowW - 74, fTrackH = 14, fZoneW = fTrackW / 4;
-            escFsrTrackHit[0] = fTrackX; escFsrTrackHit[1] = fsrRowY + 2;
-            escFsrTrackHit[2] = isLanguageMenuOpen ? 0 : fTrackW; escFsrTrackHit[3] = fTrackH;
-
-            for (int z = 0; z < 4; z++) {
-                int zx0 = fTrackX + z * fZoneW, zx1 = (z == 3) ? (fTrackX + fTrackW) : (zx0 + fZoneW);
-                fill(zx0, fsrRowY + 2, zx1, fsrRowY + 2 + fTrackH, (fsrQualityIndex == z) ? (fsrEnabled ? 0xFFDCDCDC : 0xFF666666) : 0xFF181818);
-                if (z > 0) fill(zx0, fsrRowY + 3, zx0 + 1, fsrRowY + 1 + fTrackH, 0xFF333333);
-            }
-            drawOutline(fTrackX, fsrRowY + 2, fTrackW, fTrackH, fsrEnabled ? 0xFFAAAAAA : 0xFF444444);
-
-            if (!isDraggingFsrCube) {
-                fsrSliderPos += (((fsrQualityIndex + 0.5f) / 4.0f) - fsrSliderPos) * (float) Math.min(1.0, dtUI * 20.0);
-            }
-            int fCubeSize = 16;
-            int fCubeX = Math.max(fTrackX, Math.min(fTrackX + fTrackW - fCubeSize, fTrackX + Math.round(fsrSliderPos * fTrackW) - fCubeSize / 2));
-            fill(fCubeX, fsrRowY + 1, fCubeX + fCubeSize, fsrRowY + 1 + fCubeSize, 0xFFFFFFFF);
-            drawOutline(fCubeX, fsrRowY + 1, fCubeSize, fCubeSize, 0xFF000000);
-            fill(fCubeX + 3, fsrRowY + 4, fCubeX + fCubeSize - 3, fsrRowY + fCubeSize - 2, fsrEnabled ? 0xFFFFFFFF : 0xFF999999);
-
-            int hdrY = startSetY + 2 * (rowH + rowGap);
-            escSettingHits[2][0] = rowX; escSettingHits[2][1] = hdrY; escSettingHits[2][2] = isLanguageMenuOpen ? 0 : rowW; escSettingHits[2][3] = rowH;
-            drawSettingRow("HDR", hdrEnabled ? onStr : offStr, rowX, hdrY, rowW, rowH, hdrEnabled);
-
-            String[] sLabels = {tr(4), tr(5), tr(6), tr(9), tr(10)};
-            int[] res = RESOLUTIONS[resolutionIndex];
-            String[] sValues = {
-                    vsyncEnabled ? onStr : offStr,
-                    res[0] + "x" + res[1] + (isResolutionMenuOpen ? " ^" : " v"),
-                    isFullscreen ? tr(7) : tr(8),
-                    showFpsOverlay ? onStr : offStr,
-                    photoModeFeatureEnabled ? onStr : offStr
-            };
-            boolean[] sActive = {vsyncEnabled, true, isFullscreen, showFpsOverlay, photoModeFeatureEnabled};
-
-            for (int idx = 0; idx < 5; idx++) {
-                int s = idx + 4, sy = startSetY + (idx + 3) * (rowH + rowGap);
-                escSettingHits[s][0] = rowX; escSettingHits[s][1] = sy;
-                escSettingHits[s][2] = isLanguageMenuOpen ? 0 : rowW; escSettingHits[s][3] = rowH;
-                drawSettingRow(sLabels[idx], sValues[idx], rowX, sy, rowW, rowH, sActive[idx]);
-            }
-
-            int shRowY = startSetY + 8 * (rowH + rowGap) + 3;
-            drawSmallText(tr(11), rowX, shRowY + 1, 0xFFDDDDDD);
-
-            int sTrackX = rowX + 74, sTrackW = rowW - 74, sTrackH = 14, sZoneW = sTrackW / 3;
-            escShaderTrackHit[0] = sTrackX; escShaderTrackHit[1] = shRowY;
-            escShaderTrackHit[2] = isLanguageMenuOpen ? 0 : sTrackW; escShaderTrackHit[3] = sTrackH;
-
-            fill(sTrackX, shRowY, sTrackX + sZoneW, shRowY + sTrackH, shaderMode == 2 ? 0xFF28BB38 : 0xFF154E1B);
-            fill(sTrackX + sZoneW, shRowY, sTrackX + sZoneW * 2, shRowY + sTrackH, shaderMode == 1 ? 0xFFCCAA20 : 0xFF554410);
-            fill(sTrackX + sZoneW * 2, shRowY, sTrackX + sTrackW, shRowY + sTrackH, shaderMode == 0 ? 0xFFCC2828 : 0xFF551515);
-            drawOutline(sTrackX, shRowY, sTrackW, sTrackH, 0xFF444444);
-
-            fill(sTrackX + sZoneW, shRowY + 1, sTrackX + sZoneW + 1, shRowY + sTrackH - 1, 0xFF222222);
-            fill(sTrackX + sZoneW * 2, shRowY + 1, sTrackX + sZoneW * 2 + 1, shRowY + sTrackH - 1, 0xFF222222);
-
-            if (!isDraggingShaderCube) {
-                float targetShPos = (shaderMode == 2) ? 0.166f : (shaderMode == 1 ? 0.5f : 0.833f);
-                shaderSliderPos += (targetShPos - shaderSliderPos) * (float) Math.min(1.0, dtUI * 20.0);
-            }
-            int sCubeSize = 16;
-            int sCubeX = Math.max(sTrackX, Math.min(sTrackX + sTrackW - sCubeSize, sTrackX + Math.round(shaderSliderPos * sTrackW) - sCubeSize / 2));
-            fill(sCubeX, shRowY - 1, sCubeX + sCubeSize, shRowY - 1 + sCubeSize, 0xFFEEEEEE);
-            drawOutline(sCubeX, shRowY - 1, sCubeSize, sCubeSize, 0xFF000000);
-            fill(sCubeX + 3, shRowY + 2, sCubeX + sCubeSize - 3, shRowY + sCubeSize - 4, shaderMode == 2 ? 0xFF44FF55 : (shaderMode == 1 ? 0xFFFFDD33 : 0xFFFF4444));
-
-            int pRowY = shRowY + (rowH + rowGap);
-            drawSmallText(tr(12), rowX, pRowY + 1, 0xFFDDDDDD);
-
-            int trackX = rowX + 74, trackW = rowW - 74, trackH = 14, zoneW = trackW / 4;
-            escParticleTrackHit[0] = trackX; escParticleTrackHit[1] = pRowY;
-            escParticleTrackHit[2] = isLanguageMenuOpen ? 0 : trackW; escParticleTrackHit[3] = trackH;
-
-            if (isDraggingParticleCube && !isLanguageMenuOpen) {
-                particleSliderPos = Math.max(0.0f, Math.min(1.0f, (float) ((mX - trackX) / Math.max(1, trackW))));
-                particlePreset = Math.min(3, Math.max(0, (int) (particleSliderPos * 4.0f)));
-            }
-
-            fill(trackX, pRowY, trackX + zoneW, pRowY + trackH, particlePreset == 0 ? 0xFF28BB38 : 0xFF154E1B);
-            fill(trackX + zoneW, pRowY, trackX + zoneW * 2, pRowY + trackH, particlePreset == 1 ? 0xFFCCAA20 : 0xFF554410);
-            fill(trackX + zoneW * 2, pRowY, trackX + zoneW * 3, pRowY + trackH, particlePreset == 2 ? 0xFFCC2828 : 0xFF551515);
-            fill(trackX + zoneW * 3, pRowY, trackX + trackW, pRowY + trackH, particlePreset == 3 ? 0xFF8B0032 : 0xFF3B0519);
-            drawOutline(trackX, pRowY, trackW, trackH, 0xFF444444);
-
-            fill(trackX + zoneW, pRowY + 1, trackX + zoneW + 1, pRowY + trackH - 1, 0xFF222222);
-            fill(trackX + zoneW * 2, pRowY + 1, trackX + zoneW * 2 + 1, pRowY + trackH - 1, 0xFF222222);
-            fill(trackX + zoneW * 3, pRowY + 1, trackX + zoneW * 3 + 1, pRowY + trackH - 1, 0xFF222222);
-
-            if (!isDraggingParticleCube) {
-                particleSliderPos += (((particlePreset + 0.5f) / 4.0f) - particleSliderPos) * (float) Math.min(1.0, dtUI * 20.0);
-            }
-
-            int cubeSize = 16;
-            int cubeX = Math.max(trackX, Math.min(trackX + trackW - cubeSize, trackX + Math.round(particleSliderPos * trackW) - cubeSize / 2));
-            int pCubeInnerCol = (particlePreset == 0) ? 0xFF44FF55 : (particlePreset == 1 ? 0xFFFFDD33 : (particlePreset == 2 ? 0xFFFF4444 : 0xFFB80F48));
-
-            fill(cubeX, pRowY - 1, cubeX + cubeSize, pRowY - 1 + cubeSize, 0xFFEEEEEE);
-            drawOutline(cubeX, pRowY - 1, cubeSize, cubeSize, 0xFF000000);
-            fill(cubeX + 3, pRowY + 2, cubeX + cubeSize - 3, pRowY + cubeSize - 4, pCubeInnerCol);
-
-            if (!isResolutionMenuOpen && !isLanguageMenuOpen && mX >= rowX && mX <= rowX + rowW && mY >= pRowY - 2 && mY <= pRowY + trackH + 2) {
-                String limStr = (particlePreset == 3) ? "UNLIMITED (Burgundy Ultra)" : (PhysicsEngine.getEffectiveDebrisLimit() + " Max");
-                hoverTitle = tr(12) + " " + getParticlePresetLabel(particlePreset) + " — " + limStr;
-                hoverDesc = "Green (3.2k) | Yellow (12.8k) | Red (25.6k) | Burgundy (Ultra Unlimited)";
-            }
-
-            int vRowY = pRowY + (rowH + rowGap);
-            drawSmallText(tr(34), rowX, vRowY + 1, 0xFFDDDDDD);
-
-            int vTrackX = rowX + 74, vTrackW = rowW - 74, vTrackH = 14;
-            escVolumeTrackHit[0] = vTrackX; escVolumeTrackHit[1] = vRowY;
-            escVolumeTrackHit[2] = isLanguageMenuOpen ? 0 : vTrackW; escVolumeTrackHit[3] = vTrackH;
-
-            if (isDraggingVolumeCube && !isLanguageMenuOpen) {
-                musicVolume = Math.max(0.0f, Math.min(1.0f, (float) ((mX - vTrackX) / Math.max(1, vTrackW))));
-                SBoxAudioEngine.setMusicVolume(musicVolume);
-            }
-
-            fill(vTrackX, vRowY, vTrackX + vTrackW, vRowY + vTrackH, 0xFF141820);
-            int vFillW = Math.round(musicVolume * vTrackW);
-            if (vFillW > 0) {
-                fill(vTrackX, vRowY, vTrackX + vFillW, vRowY + vTrackH, musicVolume > 0.005f ? 0xFF2266AA : 0xFF282828);
-            }
-            drawOutline(vTrackX, vRowY, vTrackW, vTrackH, 0xFF445566);
-
-            String volLabel = (musicVolume <= 0.005f) ? tr(23) : (Math.round(musicVolume * 100.0f) + "%");
-            drawSmallText(volLabel, vTrackX + (vTrackW - getSmallTextWidth(volLabel)) / 2, vRowY + 1, 0xFFFFFFFF);
-
-            int vCubeSize = 16;
-            int vCubeX = Math.max(vTrackX, Math.min(vTrackX + vTrackW - vCubeSize, vTrackX + vFillW - vCubeSize / 2));
-            fill(vCubeX, vRowY - 1, vCubeX + vCubeSize, vRowY - 1 + vCubeSize, 0xFFEEEEEE);
-            drawOutline(vCubeX, vRowY - 1, vCubeSize, vCubeSize, 0xFF000000);
-            fill(vCubeX + 3, vRowY + 2, vCubeX + vCubeSize - 3, vRowY + vCubeSize - 4, musicVolume > 0.005f ? 0xFF44AAFF : 0xFF666666);
-
-            int exitH = 22, exitY = escH - exitH - 8;
-            int langBtnH = 20, langBtnY = exitY - langBtnH - 6;
-            escLangBtnHit[0] = rowX; escLangBtnHit[1] = langBtnY; escLangBtnHit[2] = rowW; escLangBtnHit[3] = langBtnH;
-
-            boolean langHover = (!isResolutionMenuOpen && mX >= rowX && mX <= rowX + rowW && mY >= langBtnY && mY <= langBtnY + langBtnH);
-            fill(rowX, langBtnY, rowX + rowW, langBtnY + langBtnH, (isLanguageMenuOpen || langHover) ? 0xFF1A2836 : 0xFF12161E);
-            drawOutline(rowX, langBtnY, rowW, langBtnH, isLanguageMenuOpen ? 0xFF55FF55 : 0xFF557799);
-            drawSmallText(tr(0) + ":", rowX + 6, langBtnY + (langBtnH - SMALL_FONT_HEIGHT) / 2, 0xFFDDDDDD);
-
-            String curLangStr = LANGUAGE_NAMES[currentLanguage] + (isLanguageMenuOpen ? " ^" : " v");
-            int curLangW = getSmallTextWidth(curLangStr), flagW = 18, flagH = 12;
-            int textRightX = rowX + rowW - curLangW - 6;
-            drawCountryFlag(currentLanguage, textRightX - flagW - 6, langBtnY + (langBtnH - flagH) / 2, flagW, flagH);
-            drawSmallText(curLangStr, textRightX, langBtnY + (langBtnH - SMALL_FONT_HEIGHT) / 2, 0xFF55FF55);
-
-            escExitBtnHit[0] = rowX; escExitBtnHit[1] = exitY; escExitBtnHit[2] = isLanguageMenuOpen ? 0 : rowW; escExitBtnHit[3] = exitH;
-            boolean exitHover = (!isResolutionMenuOpen && !isLanguageMenuOpen && mX >= rowX && mX <= rowX + rowW && mY >= exitY && mY <= exitY + exitH);
-            fill(rowX, exitY, rowX + rowW, exitY + exitH, exitHover ? 0xFF661818 : 0xFF441111);
-            drawOutline(rowX, exitY, rowW, exitH, 0xFFFF4444);
-            String exitTxt = tr(13);
-            drawText(exitTxt, rowX + (rowW - getTextWidth(exitTxt)) / 2, exitY + (exitH - FONT_HEIGHT) / 2, 0xFFFFAAAA);
-
-            int langItemH = 18, langMenuH = LANGUAGE_NAMES.length * langItemH;
-            int langMenuX = rowX, langMenuY = langBtnY - langMenuH - 2;
-            escLangDropdownHit[0] = langMenuX; escLangDropdownHit[1] = langMenuY; escLangDropdownHit[2] = rowW; escLangDropdownHit[3] = langMenuH;
-
-            if (leftClickedNow) {
-                if (isLanguageMenuOpen && mX >= langMenuX && mX <= langMenuX + rowW && mY >= langMenuY && mY <= langMenuY + langMenuH) {
-                    int chosenLang = (int) ((mY - langMenuY) / langItemH);
-                    if (chosenLang >= 0 && chosenLang < LANGUAGE_NAMES.length) {
-                        currentLanguage = chosenLang;
-                        addNotification(tr(0) + ": " + LANGUAGE_NAMES[currentLanguage]);
+                    fill(langMenuX, langMenuY, langMenuX + rowW, langMenuY + langMenuH, 0xF5080B10);
+                    drawOutline(langMenuX, langMenuY, rowW, langMenuH, 0xFF55FF55);
+                    for (int lIdx = 0; lIdx < LANGUAGE_NAMES.length; lIdx++) {
+                        int iy = langMenuY + lIdx * langItemH;
+                        boolean lHov = (mX >= langMenuX && mX <= langMenuX + rowW && mY >= iy && mY < iy + langItemH);
+                        if (lHov || lIdx == currentLanguage) {
+                            fill(langMenuX + 1, iy, langMenuX + rowW - 1, iy + langItemH, lHov ? 0xFF223C28 : 0xFF142618);
+                        }
+                        drawCountryFlag(lIdx, langMenuX + 8, iy + (langItemH - flagH) / 2, flagW, flagH);
+                        drawSmallText(LANGUAGE_NAMES[lIdx], langMenuX + 8 + flagW + 8, iy + (langItemH - SMALL_FONT_HEIGHT) / 2, lIdx == currentLanguage ? 0xFF55FF55 : 0xFFFFFFFF);
                     }
-                    isLanguageMenuOpen = false;
-                } else if (mX >= rowX && mX <= rowX + rowW && mY >= langBtnY && mY <= langBtnY + langBtnH) {
-                    isLanguageMenuOpen = !isLanguageMenuOpen;
-                    isResolutionMenuOpen = false;
-                } else if (isLanguageMenuOpen) {
-                    isLanguageMenuOpen = false;
                 }
-            }
 
-            if (isLanguageMenuOpen) {
-                fill(langMenuX, langMenuY, langMenuX + rowW, langMenuY + langMenuH, 0xF5080B10);
-                drawOutline(langMenuX, langMenuY, rowW, langMenuH, 0xFF55FF55);
-                for (int lIdx = 0; lIdx < LANGUAGE_NAMES.length; lIdx++) {
-                    int iy = langMenuY + lIdx * langItemH;
-                    boolean lHov = (mX >= langMenuX && mX <= langMenuX + rowW && mY >= iy && mY < iy + langItemH);
-                    if (lHov || lIdx == currentLanguage) {
-                        fill(langMenuX + 1, iy, langMenuX + rowW - 1, iy + langItemH, lHov ? 0xFF223C28 : 0xFF142618);
+                if (isResolutionMenuOpen && escSettingHits[5][3] > 0) {
+                    int ddW = 105, ddItemH = 16, ddH = RESOLUTIONS.length * ddItemH;
+                    int ddX = rowX + rowW - ddW, ddY = Math.min(contentBottom - ddH, escSettingHits[5][1] + rowH + 1);
+                    escResDropdownHit[0] = ddX; escResDropdownHit[1] = ddY; escResDropdownHit[2] = ddW; escResDropdownHit[3] = ddH;
+
+                    fill(ddX, ddY, ddX + ddW, ddY + ddH, 0xFF0A0A0D);
+                    drawOutline(ddX, ddY, ddW, ddH, 0xFF55FF55);
+                    for (int rIdx = 0; rIdx < RESOLUTIONS.length; rIdx++) {
+                        int iy = ddY + rIdx * ddItemH;
+                        boolean rHov = (mX >= ddX && mX <= ddX + ddW && mY >= iy && mY < iy + ddItemH);
+                        if (rHov || rIdx == resolutionIndex) {
+                            fill(ddX + 1, iy, ddX + ddW - 1, iy + ddItemH, rHov ? 0xFF284428 : 0xFF162816);
+                        }
+                        drawSmallText(RESOLUTIONS[rIdx][0] + "x" + RESOLUTIONS[rIdx][1], ddX + 8, iy + 2, rIdx == resolutionIndex ? 0xFF55FF55 : 0xFFFFFFFF);
                     }
-                    drawCountryFlag(lIdx, langMenuX + 8, iy + (langItemH - flagH) / 2, flagW, flagH);
-                    drawSmallText(LANGUAGE_NAMES[lIdx], langMenuX + 8 + flagW + 8, iy + (langItemH - SMALL_FONT_HEIGHT) / 2, lIdx == currentLanguage ? 0xFF55FF55 : 0xFFFFFFFF);
                 }
-            }
 
-            if (isResolutionMenuOpen && !isLanguageMenuOpen) {
-                int ddW = 105, ddItemH = 16, ddH = RESOLUTIONS.length * ddItemH;
-                int ddX = rowX + rowW - ddW, ddY = escSettingHits[5][1] + rowH + 1;
-                escResDropdownHit[0] = ddX; escResDropdownHit[1] = ddY; escResDropdownHit[2] = ddW; escResDropdownHit[3] = ddH;
+                if (isMathBitsMenuOpen && escMathBitsBtnHit[3] > 0) {
+                    int ddW = 105, ddItemH = 16, ddH = MATH_BITS_OPTIONS.length * ddItemH;
+                    int ddX = rowX + rowW - ddW, ddY = Math.min(contentBottom - ddH, escMathBitsBtnHit[1] + rowH + 1);
+                    escMathBitsDropdownHit[0] = ddX; escMathBitsDropdownHit[1] = ddY; escMathBitsDropdownHit[2] = ddW; escMathBitsDropdownHit[3] = ddH;
 
-                fill(ddX, ddY, ddX + ddW, ddY + ddH, 0xFF0A0A0D);
-                drawOutline(ddX, ddY, ddW, ddH, 0xFF55FF55);
-                for (int rIdx = 0; rIdx < RESOLUTIONS.length; rIdx++) {
-                    int iy = ddY + rIdx * ddItemH;
-                    boolean rHov = (mX >= ddX && mX <= ddX + ddW && mY >= iy && mY < iy + ddItemH);
-                    if (rHov || rIdx == resolutionIndex) {
-                        fill(ddX + 1, iy, ddX + ddW - 1, iy + ddItemH, rHov ? 0xFF284428 : 0xFF162816);
+                    fill(ddX, ddY, ddX + ddW, ddY + ddH, 0xFF0A0A0D);
+                    drawOutline(ddX, ddY, ddW, ddH, 0xFF55FF55);
+                    for (int mIdx = 0; mIdx < MATH_BITS_OPTIONS.length; mIdx++) {
+                        int iy = ddY + mIdx * ddItemH;
+                        boolean mHov = (mX >= ddX && mX <= ddX + ddW && mY >= iy && mY < iy + ddItemH);
+                        if (mHov || mIdx == physicsPrecisionMode) {
+                            fill(ddX + 1, iy, ddX + ddW - 1, iy + ddItemH, mHov ? 0xFF284428 : 0xFF162816);
+                        }
+                        int colTxt = (mIdx == 2 && !SBoxVulkanCore.supportsFp64) ? 0xFF666666 : (mIdx == physicsPrecisionMode ? 0xFF55FF55 : 0xFFFFFFFF);
+                        drawSmallText(MATH_BITS_OPTIONS[mIdx], ddX + 8, iy + 2, colTxt);
                     }
-                    drawSmallText(RESOLUTIONS[rIdx][0] + "x" + RESOLUTIONS[rIdx][1], ddX + 8, iy + 2, rIdx == resolutionIndex ? 0xFF55FF55 : 0xFFFFFFFF);
+                }
+
+                if (openColorPicker == 1 || openColorPicker == 2) {
+                    int[] anchor = (openColorPicker == 1) ? escColor1Hit : escColor2Hit;
+                    int[] palette = (openColorPicker == 1) ? PALETTE_COLOR_1 : PALETTE_COLOR_2;
+                    int currentSelected = (openColorPicker == 1) ? uiColor1 : uiColor2;
+
+                    int cols = 8;
+                    int popW = rowW, popH = 44;
+                    int popX = rowX;
+                    int popY = anchor[1] + anchor[3] + 2;
+                    if (popY + popH > contentBottom) popY = Math.max(contentTop, anchor[1] - popH - 2);
+
+                    escColorPopupHit[0] = popX; escColorPopupHit[1] = popY;
+                    escColorPopupHit[2] = popW; escColorPopupHit[3] = popH;
+
+                    fill(popX, popY, popX + popW, popY + popH, 0xF508090C);
+                    drawOutline(popX, popY, popW, popH, uiColor2);
+
+                    int cellW = (popW - 8) / cols;
+                    int cellH = (popH - 8) / 2;
+                    for (int i = 0; i < palette.length; i++) {
+                        int c = i % cols, r = i / cols;
+                        int cx = popX + 4 + c * cellW, cy = popY + 4 + r * cellH;
+                        int colVal = palette[i] | 0xFF000000;
+                        fill(cx + 1, cy + 1, cx + cellW - 1, cy + cellH - 1, colVal);
+                        boolean isSel = (colVal == (currentSelected | 0xFF000000));
+                        boolean isHov = (mX >= cx && mX <= cx + cellW && mY >= cy && mY <= cy + cellH);
+                        drawOutline(cx + 1, cy + 1, cellW - 2, cellH - 2, isSel ? 0xFF55FF55 : (isHov ? 0xFFFFFFFF : 0xFF444444));
+                    }
                 }
             }
         }
 
+        // ==================== ДВУХКОЛОНОЧНЫЙ PERFORMANCE MONITOR ====================
         if (showFpsOverlay && !isWelcomeMenuOpen) {
-            fpsOverlayW = 325; fpsOverlayH = 112;
+            fpsOverlayW = 480; fpsOverlayH = 178;
             fpsOverlayX = Math.max(4, Math.min(sWidth - fpsOverlayW - 4, fpsOverlayX));
             fpsOverlayY = Math.max(4, Math.min(rectY - fpsOverlayH - 4, fpsOverlayY));
 
-            fill(fpsOverlayX, fpsOverlayY, fpsOverlayX + fpsOverlayW, fpsOverlayY + fpsOverlayH, 0xDD070709);
+            fill(fpsOverlayX, fpsOverlayY, fpsOverlayX + fpsOverlayW, fpsOverlayY + fpsOverlayH, (0xE2 << 24) | (uiColor1 & 0x00FFFFFF));
             fill(fpsOverlayX, fpsOverlayY, fpsOverlayX + fpsOverlayW, fpsOverlayY + 20, isDraggingFpsOverlay ? 0xFF223822 : 0xFF141820);
-            drawOutline(fpsOverlayX, fpsOverlayY, fpsOverlayW, fpsOverlayH, isDraggingFpsOverlay ? 0xFF55FF55 : 0xFF445566);
+            drawOutline(fpsOverlayX, fpsOverlayY, fpsOverlayW, fpsOverlayH, isDraggingFpsOverlay ? uiColor2 : 0xFF445566);
             fill(fpsOverlayX, fpsOverlayY + 20, fpsOverlayX + fpsOverlayW, fpsOverlayY + 21, 0xFF334455);
 
             drawSmallText("Performance Monitor (Drag to move)", fpsOverlayX + 8, fpsOverlayY + 4, 0xFFFFFFFF);
 
-            String fpsMain = String.format(Locale.US, "FPS: %d   |   Frame: %.2f ms", currentFps, smoothedFrameMs);
-            String gpuPhys = String.format(Locale.US, "GPU Sector Physics Tick: %.2f ms", lastPhysicsTickMs);
-            String resInfo = String.format(Locale.US, "Render: %dx%d  |  Shaders: %s", activeRenderW, activeRenderH, SHADER_MODES[shaderMode]);
-            String maxDebStr = (particlePreset == 3) ? "∞" : String.valueOf(PhysicsEngine.getEffectiveDebrisLimit());
-            String objInfo = String.format(Locale.US, "Planets: %d/64  |  Debris: %d/%s (%s)", planets.size(), fragments.size() + particles.size(), maxDebStr, getParticlePresetLabel(particlePreset));
+            String fpsMain = String.format(Locale.US, "FPS: %d   |   Frame: %.2f ms   |   Time: %s",
+                    currentFps, smoothedFrameMs, isPaused ? "PAUSED" : formatTimeScale(timeScale));
+            drawText(fpsMain, fpsOverlayX + 10, fpsOverlayY + 24, currentFps >= 60 ? 0xFF55FF55 : 0xFFFFFF55);
+            fill(fpsOverlayX + 6, fpsOverlayY + 44, fpsOverlayX + fpsOverlayW - 6, fpsOverlayY + 45, 0xFF2A3442);
 
-            drawText(fpsMain, fpsOverlayX + 10, fpsOverlayY + 26, currentFps >= 60 ? 0xFF55FF55 : 0xFFFFFF55);
-            drawSmallText(gpuPhys, fpsOverlayX + 10, fpsOverlayY + 48, lastPhysicsTickMs < 5.0 ? 0xFF55FF55 : 0xFFFFFF55);
-            drawSmallText(resInfo, fpsOverlayX + 10, fpsOverlayY + 68, 0xFF88CCFF);
-            drawSmallText(objInfo, fpsOverlayX + 10, fpsOverlayY + 88, particlePreset == 3 ? 0xFFFF6699 : 0xFFCCCCCC);
+            int col1X = fpsOverlayX + 10;
+            int divX = fpsOverlayX + fpsOverlayW / 2 - 4;
+            int col2X = divX + 8;
+            fill(divX, fpsOverlayY + 48, divX + 1, fpsOverlayY + fpsOverlayH - 6, 0xFF2A3442);
+
+            Runtime rt = Runtime.getRuntime();
+            long usedMb = (rt.totalMemory() - rt.freeMemory()) / (1024L * 1024L);
+            long totalMb = rt.totalMemory() / (1024L * 1024L);
+            int fragCnt = fragments.size(), gasCnt = particles.size(), totDeb = fragCnt + gasCnt;
+            String maxDebStr = (particlePreset == 3) ? "∞" : String.valueOf(PhysicsEngine.getEffectiveDebrisLimit());
+            double camDistKm = CameraManager.pos.length() * BLOCK_TO_KM;
+
+            int ly = fpsOverlayY + 50, lh = 15;
+            drawSmallText(String.format(Locale.US, "GPU Phys: %.2f ms (%d steps)", lastPhysicsTickMs, lastPhysicsSubSteps), col1X, ly, lastPhysicsTickMs < 5.0 ? 0xFF55FF55 : 0xFFFFFF55);
+            drawSmallText(String.format(Locale.US, "Math: %s | Sim: %s", getPhysicsPrecisionLabel(physicsPrecisionMode), physicsSimMode == 0 ? "Simple" : "Real"), col1X, ly + lh, 0xFF88CCFF);
+            drawSmallText(String.format(Locale.US, "Planets: %d / 64 active", planets.size()), col1X, ly + lh * 2, 0xFFDDDDDD);
+            drawSmallText(String.format(Locale.US, "Debris: %d / %s", totDeb, maxDebStr), col1X, ly + lh * 3, particlePreset == 3 ? 0xFFFF77AA : 0xFFCCCCCC);
+            drawSmallText(String.format(Locale.US, "  Frag: %d  |  Gas: %d", fragCnt, gasCnt), col1X, ly + lh * 4, 0xFFAAAAAA);
+            drawSmallText(String.format(Locale.US, "UI Lines: %d / %d", frameOverlayLineCount, MAX_FRAME_OVERLAY_LINES), col1X, ly + lh * 5, frameOverlayLineCount < 1400 ? 0xFFAACCEE : 0xFFFFAA55);
+            drawSmallText(String.format(Locale.US, "Cam Dist: %s", formatDistanceKm(camDistKm)), col1X, ly + lh * 6, 0xFFCCCCCC);
+            drawSmallText(String.format(Locale.US, "RAM: %d MB / %d MB", usedMb, totalMb), col1X, ly + lh * 7, 0xFF99CC99);
+
+            int[] targetRes = RESOLUTIONS[resolutionIndex];
+            String fsrInfo = fsrEnabled ? ("ON (" + FSR_MODES[fsrQualityIndex] + ")") : "OFF (Native)";
+            drawSmallText(String.format(Locale.US, "Display: %dx%d (%s)", targetRes[0], targetRes[1], isFullscreen ? "Full" : "Win"), col2X, ly, 0xFFFFCC66);
+            drawSmallText(String.format(Locale.US, "Render: %dx%d | Shaders: %s", activeRenderW, activeRenderH, SHADER_MODES[shaderMode]), col2X, ly + lh, 0xFF88CCFF);
+            drawSmallText("AMD FSR 1.0: " + fsrInfo, col2X, ly + lh * 2, fsrEnabled ? 0xFF55FF55 : 0xFFAAAAAA);
+            drawSmallText(String.format(Locale.US, "V-Sync: %s  |  HDR: %s", vsyncEnabled ? "ON" : "OFF", hdrEnabled ? "ON" : "OFF"), col2X, ly + lh * 3, 0xFFDDDDDD);
+            drawSmallText(String.format(Locale.US, "Particles: %s | Collisions: %s", getParticlePresetLabel(particlePreset), enableCollisions ? "ON" : "OFF"), col2X, ly + lh * 4, 0xFFDDDDDD);
+            drawSmallText(String.format(Locale.US, "BH Disk: %s | Saturn Rings: %s", enableAccretionDisk ? "ON" : "OFF", enableSaturnRings ? "ON" : "OFF"), col2X, ly + lh * 5, (enableAccretionDisk || enableSaturnRings) ? 0xFFFFBB55 : 0xFF999999);
+            drawSmallText(String.format(Locale.US, "Grid: %s | GravGrid: %s", showGrid ? "ON" : "OFF", showGravityGrid ? "ON" : "OFF"), col2X, ly + lh * 6, 0xFFCCCCCC);
+            drawSmallText(String.format(Locale.US, "Trails: %s | HabZone: %s", showTrails ? "ON" : "OFF", showHabitableZone ? "ON" : "OFF"), col2X, ly + lh * 7, 0xFFCCCCCC);
         }
 
         if (isWelcomeMenuOpen) {
             int panelW = 500, panelH = 345;
             int panelX = (sWidth - panelW) / 2, panelY = (sHeight - panelH) / 2;
 
-            fill(panelX, panelY, panelX + panelW, panelY + panelH, 0xFF050505);
+            fill(panelX, panelY, panelX + panelW, panelY + panelH, uiColor1);
             drawOutline(panelX, panelY, panelW, panelH, 0xFF333333);
 
             int logoW = 160, logoH = 58, logoY = panelY + 18;
@@ -1272,41 +1950,98 @@ public class SpaceUI {
             SpaceEngine.closeBtnY = panelY + panelH - SpaceEngine.closeBtnH - 17;
 
             fill(SpaceEngine.closeBtnX, SpaceEngine.closeBtnY, SpaceEngine.closeBtnX + SpaceEngine.closeBtnW, SpaceEngine.closeBtnY + SpaceEngine.closeBtnH, 0xFF111111);
-            drawOutline(SpaceEngine.closeBtnX, SpaceEngine.closeBtnY, SpaceEngine.closeBtnW, SpaceEngine.closeBtnH, 0xFF555555);
+            drawOutline(SpaceEngine.closeBtnX, SpaceEngine.closeBtnY, SpaceEngine.closeBtnW, SpaceEngine.closeBtnH, uiColor2);
             drawText(closeTxt, SpaceEngine.closeBtnX + 15, SpaceEngine.closeBtnY + 7, 0xFFFFFFFF);
         }
 
+        // ==================== МЕНЮ РЕДАКТИРОВАНИЯ + НАСТОЯЩИЙ 3D-ВЬЮПОРТ SBoxCompute ====================
+        clearHitbox(previewBoxHit);
         if (CameraManager.isLocked && CameraManager.lockedTarget != null && !isWelcomeMenuOpen) {
-            int panelW = 230;
-            currentEditMenuW = panelW;
-            editMenuAnimX += ((isEditMenuMinimized ? -panelW : 0) - editMenuAnimX) * Math.min(1.0, dtUI * 15.0);
-            int currentX = (int) Math.round(editMenuAnimX);
-            currentEditMenuX = currentX;
+            int panelW = currentEditMenuW;
+            int currentX = currentEditMenuX;
             int panelH = rectY;
+            int headerH = 38;
 
-            fill(currentX, 0, currentX + panelW, panelH, 0xFF050505);
+            Planet p = CameraManager.lockedTarget;
+            int prevH = 148;
+            int prevX = currentX + 6, prevW = panelW - 12;
+            int prevY = headerH + 6 - (int) editMenuScrollY;
+
+            int visX0 = Math.max(0, prevX + 1);
+            int visX1 = Math.max(visX0, prevX + prevW - 1);
+            int visY0 = Math.max(headerH, prevY + 1);
+            int visY1 = Math.min(panelH, prevY + prevH - 1);
+            boolean has3DHole = (!isEditMenuMinimized && isObjectPreviewOpen && visX1 > visX0 && visY1 > visY0);
+
+            if (has3DHole) {
+                fill(currentX, 0, currentX + panelW, visY0, uiColor1);
+                fill(currentX, visY1, currentX + panelW, panelH, uiColor1);
+                fill(currentX, visY0, visX0, visY1, uiColor1);
+                fill(visX1, visY0, currentX + panelW, visY1, uiColor1);
+
+                float scaleX = (float) activeRenderW / Math.max(1, sWidth);
+                float scaleY = (float) activeRenderH / Math.max(1, sHeight);
+                previewClipRectRender[0] = visX0 * scaleX;
+                previewClipRectRender[1] = visY0 * scaleY;
+                previewClipRectRender[2] = visX1 * scaleX;
+                previewClipRectRender[3] = visY1 * scaleY;
+
+                previewCenterScaleRender[0] = (prevX + prevW * 0.5f) * scaleX;
+                previewCenterScaleRender[1] = (prevY + prevH * 0.5f) * scaleY;
+                previewCenterScaleRender[2] = prevH * scaleY * 0.85f;
+                previewCenterScaleRender[3] = objectPreviewZoom;
+            } else {
+                fill(currentX, 0, currentX + panelW, panelH, uiColor1);
+            }
             fill(currentX + panelW - 1, 0, currentX + panelW, panelH, 0xFF2A2A2A);
 
             minBtnW = 16; minBtnH = 28; minBtnX = currentX + panelW; minBtnY = 10;
-            fill(minBtnX, minBtnY, minBtnX + minBtnW, minBtnY + minBtnH, 0xFF050505);
+            fill(minBtnX, minBtnY, minBtnX + minBtnW, minBtnY + minBtnH, uiColor1);
             drawOutline(minBtnX, minBtnY, minBtnW, minBtnH, 0xFF2A2A2A);
-            fill(minBtnX, minBtnY + 1, minBtnX + 1, minBtnY + minBtnH - 1, 0xFF050505);
-            drawText(isEditMenuMinimized ? ">" : "<", minBtnX + 4, minBtnY + 6, 0xFFFFFFFF);
+            fill(minBtnX, minBtnY + 1, minBtnX + 1, minBtnY + minBtnH - 1, uiColor1);
+            drawText(isEditMenuMinimized ? ">" : "<", minBtnX + 4, minBtnY + 6, uiColor2);
 
-            Planet p = CameraManager.lockedTarget;
-            flashBtnX = minBtnX + minBtnW + 4; flashBtnY = 10;
+            viewBtnX = minBtnX + minBtnW + 4; viewBtnY = 10;
+            drawIcon(ICON_VIEWING, viewBtnX, viewBtnY, viewBtnS, viewBtnS, isObjectPreviewOpen ? 0xFFFFFFFF : 0xFF555555);
+            if (mX >= viewBtnX && mX <= viewBtnX + viewBtnS && mY >= viewBtnY && mY <= viewBtnY + viewBtnS) {
+                hoverTitle = tr(45) + ": " + (isObjectPreviewOpen ? tr(22) : tr(23));
+                hoverDesc = tr(46);
+            }
+
+            flashBtnX = viewBtnX + viewBtnS + 4; flashBtnY = 10;
             drawIcon(ICON_FLASHLIGHT, flashBtnX, flashBtnY, flashBtnS, flashBtnS, p.flashlightOn ? 0xFFFFFFFF : 0xFF555555);
+            if (mX >= flashBtnX && mX <= flashBtnX + flashBtnS && mY >= flashBtnY && mY <= flashBtnY + flashBtnS) {
+                hoverTitle = tr(47) + ": " + (p.flashlightOn ? tr(22) : tr(23));
+                hoverDesc = tr(48);
+            }
 
             raysBtnX = flashBtnX + flashBtnS + 4; raysBtnY = 10;
             drawIcon(ICON_RAYS, raysBtnX, raysBtnY, raysBtnS, raysBtnS, p.raysOn ? 0xFFFFFFFF : 0xFF555555);
-
-            drawText(tr(24) + p.name, currentX + 10, 14, 0xFFFFFFFF);
+            if (mX >= raysBtnX && mX <= raysBtnX + raysBtnS && mY >= raysBtnY && mY <= raysBtnY + raysBtnS) {
+                hoverTitle = tr(49) + ": " + (p.raysOn ? tr(22) : tr(23));
+                hoverDesc = tr(50);
+            }
 
             if (!isEditMenuMinimized) {
-                int headerH = 38;
+                int yOff = prevY;
+                if (isObjectPreviewOpen) {
+                    if (has3DHole) {
+                        previewBoxHit[0] = prevX; previewBoxHit[1] = visY0;
+                        previewBoxHit[2] = prevW; previewBoxHit[3] = visY1 - visY0;
+                        drawOutline(prevX, visY0 - 1, prevW, (visY1 - visY0) + 2, isDraggingObjectPreview ? uiColor2 : 0xFF2A2A2A);
+                        if (prevY + 4 >= headerH && prevY + 16 <= panelH) {
+                            drawSmallText(p.type, prevX + 6, prevY + 4, 0xFF88AABB);
+                        }
+                        if (prevY + prevH - 15 >= headerH && prevY + prevH <= panelH) {
+                            String hint = tr(51);
+                            drawSmallText(hint, prevX + prevW - getSmallTextWidth(hint) - 6, prevY + prevH - SMALL_FONT_HEIGHT - 3, 0xFF777777);
+                        }
+                    }
+                    yOff += prevH + 6;
+                }
+
                 String[] labels = {tr(25), tr(26), tr(27), tr(28), tr(29), tr(30)};
                 String[][] units = {{"Earths", "Suns", "kg"}, {"km", "Earths", "Suns"}, {"hours", "days", "years"}, {"deg"}, {"km/s", "m/s", "km/h", "c"}, {"C", "K", "F"}};
-                int yOff = headerH + 8 - (int) editMenuScrollY;
 
                 for (int i = 0; i < 6; i++) {
                     int blockH = (i < 3) ? 50 : 28;
@@ -1362,6 +2097,10 @@ public class SpaceUI {
                     yOff += blockH + 6;
                 }
 
+                fill(currentX, 0, currentX + panelW - 1, headerH, uiColor1);
+                fill(currentX + 6, headerH - 1, currentX + panelW - 6, headerH, 0xFF2A2A2A);
+                drawText(tr(24) + p.name, currentX + 10, 14, 0xFFFFFFFF);
+
                 if (openEditUnitMenu >= 0 && openEditUnitMenu < 6 && units[openEditUnitMenu].length > 1) {
                     String[] uOpts = units[openEditUnitMenu];
                     editUnitMenuW = unitBoxHits[openEditUnitMenu][2];
@@ -1379,6 +2118,8 @@ public class SpaceUI {
                         drawSmallText(uOpts[uIdx], editUnitMenuX + (editUnitMenuW - getSmallTextWidth(uOpts[uIdx])) / 2, uy + 2, fieldUnits[openEditUnitMenu] == uIdx ? 0xFF55FF55 : 0xFFFFFFFF);
                     }
                 }
+            } else {
+                drawText(tr(24) + p.name, currentX + 10, 14, 0xFFFFFFFF);
             }
         } else openEditUnitMenu = -1;
 
@@ -1387,7 +2128,7 @@ public class SpaceUI {
             toolMenuX = sWidth - toolMenuW;
             toolMenuY = sHeight - (int) ((barHeight + toolMenuH) * animToolsY);
 
-            fill(toolMenuX, toolMenuY, sWidth, toolMenuY + toolMenuH, 0xFF050505);
+            fill(toolMenuX, toolMenuY, sWidth, toolMenuY + toolMenuH, uiColor1);
             fill(toolMenuX, toolMenuY, sWidth, toolMenuY + 1, 0xFF1A1A1A);
             fill(toolMenuX, toolMenuY, toolMenuX + 1, toolMenuY + toolMenuH, 0xFF1A1A1A);
 
@@ -1402,15 +2143,6 @@ public class SpaceUI {
             physicsToolY  = toolMenuY + 139;
             clearToolY    = toolMenuY + 162;
 
-            if (leftClickedNow && isToolsMenuOpen && mX >= btnX && mX <= btnX + btnW) {
-                if (mY >= gravGridToolY && mY <= gravGridToolY + toggleH) {
-                    showGravityGrid = !showGravityGrid;
-                    if (showGravityGrid) { showGrid = false; prevShowGrid = false; }
-                } else if (mY >= gridToolY && mY <= gridToolY + toggleH) {
-                    if (showGravityGrid) showGravityGrid = false;
-                }
-            }
-
             drawMenuToggle(tr(16), btnX, moveToolY,     btnW, toggleH, isMoveToolActive);
             drawMenuToggle(tr(17), btnX, gridToolY,     btnW, toggleH, showGrid);
             drawMenuToggle(tr(33), btnX, gravGridToolY, btnW, toggleH, showGravityGrid);
@@ -1424,7 +2156,7 @@ public class SpaceUI {
             int menuHeight = 135;
             int menuY = sHeight - (int) ((barHeight + menuHeight) * animAddY);
 
-            fill(0, menuY, sWidth, menuY + menuHeight, 0xFF050505);
+            fill(0, menuY, sWidth, menuY + menuHeight, uiColor1);
             fill(0, menuY, sWidth, menuY + 1, 0xFF1A1A1A);
 
             int catX = 10, catY = menuY + 6, catSize = 18; catHitY = catY; catHitH = catSize;
@@ -1434,7 +2166,7 @@ public class SpaceUI {
                 int w;
                 if (c == 0) {
                     String text = "ALL"; w = getTextWidth(text) + 12; catHitX[c] = catX; catHitW[c] = w;
-                    drawText(text, catX + 6, catY + (catSize - FONT_HEIGHT) / 2, currentCategory == c ? 0xFF666666 : 0xFFFFFFFF); catX += w;
+                    drawText(text, catX + 6, catY + (catSize - FONT_HEIGHT) / 2, currentCategory == c ? 0xFF666666 : uiColor2); catX += w;
                 } else {
                     w = catSize + 12; catHitX[c] = catX; catHitW[c] = w;
                     String tex = (c == 1) ? ICON_PLANETS : (c == 2 ? ICON_MOONS : (c == 3 ? ICON_STARS : ICON_HOLES));
@@ -1500,7 +2232,7 @@ public class SpaceUI {
                 fill(trackX, trackY, trackX + 3, trackY + trackH, 0xFF151515);
                 int thumbH = Math.max(16, (int) ((float) visibleAreaH / (totalRows * rowHeight) * trackH));
                 int thumbY = trackY + (int) ((menuScrollY / (float) maxScroll) * (trackH - thumbH));
-                fill(trackX, thumbY, trackX + 3, thumbY + thumbH, 0xFF555555);
+                fill(trackX, thumbY, trackX + 3, thumbY + thumbH, uiColor2);
             }
 
             fill(sepX, menuY + 10, sepX + 1, menuY + menuHeight - 10, 0xFF2A2A2A);
@@ -1531,7 +2263,7 @@ public class SpaceUI {
 
                 if (isUnitMenuOpen && !speedBlocked) {
                     unitMenuHitW = unitBoxHitW; unitMenuHitH = 16 * 4; unitMenuHitX = unitBoxHitX; unitMenuHitY = unitBoxHitY - unitMenuHitH;
-                    fill(unitMenuHitX, unitMenuHitY, unitMenuHitX + unitMenuHitW, unitMenuHitY + unitMenuHitH, 0xFF050505);
+                    fill(unitMenuHitX, unitMenuHitY, unitMenuHitX + unitMenuHitW, unitMenuHitY + unitMenuHitH, uiColor1);
                     drawOutline(unitMenuHitX, unitMenuHitY, unitMenuHitW, unitMenuHitH, 0xFF777777);
                     for (int i = 0; i < 4; i++) {
                         int itemY = unitMenuHitY + i * 16;
@@ -1549,8 +2281,8 @@ public class SpaceUI {
             }
         }
 
-        fill(0, rectY, sWidth, sHeight, 0xFF050505);
-        fill(0, rectY, sWidth, rectY + 1, isPaused ? 0xFFFFFFFF : 0xFF2A2A2A);
+        fill(0, rectY, sWidth, sHeight, uiColor1);
+        fill(0, rectY, sWidth, rectY + 1, isPaused ? uiColor2 : 0xFF2A2A2A);
 
         int centerY = rectY + barHeight / 2;
         int playIconPadX = 6, playIconPadY = 2; String playIcon = isPaused ? "||" : ">";
